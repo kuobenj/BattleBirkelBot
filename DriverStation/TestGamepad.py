@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Code taken from http://www.pygame.org/docs/ref/joystick.html#pygame.joystick.Joystick.get_axis
+# Code taken from http://www.pygame.org/docs/ref/joystick.html
 
 import pygame
 
