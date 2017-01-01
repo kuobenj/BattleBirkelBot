@@ -12,6 +12,10 @@ leftMotorPin = 3
 rightMotorPin = 5
 armMotorPin = 7
 
+LED1Pin = 11
+LED2Pin = 13
+LED3Pin = 15
+
 MOTOR_IDLE = 127
 
 def main():
@@ -50,13 +54,14 @@ def main():
 
             # Get the raw values for translation/rotation using the joysticks
             yRaw = joysticks[0].get_axis(1) # Y-axis translation comes from the left joystick Y axis
-            rRaw = -joysticks[0].get_axis(4) # rotation comes from the right joystick X axis
+            rRaw = -joysticks[0].get_axis(3) # rotation comes from the right joystick X axis
 
             # Get the motor commands for H-Drive
-            mtrCmds = tankDrive(yRaw, rRaw)
+            mtrCmds = arcadeDrive(yRaw, rRaw)
 
             # Get the controller commands for the arm
-            armTrig = -joysticks[0].get_axis(2)          # Raising/lowering the arm comes from the analog triggers...
+            armUpTrig = -joysticks[0].get_axis(2)          # Raising/lowering the arm comes from the analog triggers...
+            armDownTrig = -joysticks[0].get_axis(5)          # Raising/lowering the arm comes from the analog triggers...
             armUpBtn = joysticks[0].get_button(4)    #    OR the left bumper
             armDownBtn = joysticks[0]. get_button(5) #    OR the right bumper
             
@@ -67,7 +72,9 @@ def main():
             elif (armUpBtn):
                 armCmd = int(127-100)
             else:
-                armCmd = int(127 + armTrig*127)
+                armUpTrig = (armUpTrig+1)/2.0
+                armDownTrig = -(armDownTrig+1)/2.0
+                armCmd = int(127 + (armUpTrig+armDownTrig)*127)
 
             # Only send if the commands changed or if 200ms have elapsed
             if (prevMtrCmds['left'] != mtrCmds['left'] or
@@ -88,7 +95,7 @@ def main():
         cleanup()
 
 
-def tankDrive(yIn, rIn):
+def arcadeDrive(yIn, rIn):
     
     # Set drive command range constants
     zeroCommand = 127  # the default value that corresponds to no motor power
