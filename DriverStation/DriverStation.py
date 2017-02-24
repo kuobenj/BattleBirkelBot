@@ -8,9 +8,6 @@ import array
 import sys
 import math
 
-# Global variables
-startByte = 0xFF
-
 # To check what serial ports are available in Linux, use the bash command: dmesg | grep tty
 # To check what serial ports are available in Windows, use the cmd command: wmic path Win32_SerialPort
 comPort = 'COM3'
@@ -30,7 +27,8 @@ def main():
         print("Detected joystick '",joysticks[-1].get_name(),"'")
 
     # Local variables
-    prevMtrCmds = {'left':0, 'right':0, 'mid':0}
+    prevdriveMtrCmds = {'left':0, 'right':0}
+    prevArmCmd = 0
     prevTimeSent = 0
     done = False
 
@@ -39,90 +37,77 @@ def main():
 
             pygame.event.pump() # This line is needed to process the gamepad packets
 
-            # Get the raw values for translation/rotation using the joysticks
-            xRaw = joysticks[0].get_axis(0) # X-axis translation comes from the left joystick X axis
-            yRaw = joysticks[0].get_axis(1) # Y-axis translation comes from the left joystick Y axis
-            rRaw = -joysticks[0].get_axis(4) # rotation comes from the right joystick X axis
+            # Get the raw values for drive translation/rotation and arm using the gamepad
+            yRaw = joysticks[0].get_axis(1)  # Y-axis translation comes from the left joystick Y axis
+            rRaw = -joysticks[0].get_axis(4) # Rotation comes from the right joystick X axis
+            aRaw = -joysticks[0].get_axis(2) # Raising/lowering the arm comes from the analog triggers
 
-            # Get the motor commands for H-Drive
-            mtrCmds = hDrive(xRaw, yRaw, rRaw)
+            # Get the drive motor commands for Arcade Drive
+            driveMtrCmds = arcadeDrive(yRaw, rRaw)
 
-            # Get the controller commands for the arm
-            armTrig = -joysticks[0].get_axis(2)          # Raising/lowering the arm comes from the analog triggers...
-            armUpBtn = joysticks[0].get_button(4)    #    OR the left bumper
-            armDownBtn = joysticks[0]. get_button(5) #    OR the right bumper
+            # Get the arm motor command
+            armCmd = armDrive(aRaw)
             
-            # Apply precedence of the arm buttons over the analog triggers
-            armCmd = int(127)
+            # Allow the bumpers to control the arm, overriding the analog triggers
+            armUpBtn = joysticks[0].get_button(4)
+            armDownBtn = joysticks[0]. get_button(5)
+            btnCmd = int(50)
             if (armDownBtn):
-                armCmd = int(127+100)
+                armCmd = 127+btnCmd
             elif (armUpBtn):
-                armCmd = int(127-100)
-            else:
-                armCmd = int(127 + armTrig*127)
+                armCmd = 127-btnCmd
 
             # Only send if the commands changed or if 200ms have elapsed
-            if (prevMtrCmds['left'] != mtrCmds['left'] or
-                prevMtrCmds['right'] != mtrCmds['right'] or
-                prevMtrCmds['mid'] != mtrCmds['mid'] or
+            if (prevdriveMtrCmds['left'] != driveMtrCmds['left'] or
+                prevdriveMtrCmds['right'] != driveMtrCmds['right'] or
+                prevArmCmd != armCmd or
                 time.time()*1000 > prevTimeSent + 200):
 
-                checksum = mtrCmds['left'] + mtrCmds['right'] + mtrCmds['mid'] + armCmd
-                print("Sending... L: ", mtrCmds['left'], ", R: ", mtrCmds['right'], ", M: ", mtrCmds['mid'], ", A: ", armCmd, ", CS: ", checksum)
-                ser.write(chr(255))
-                ser.write(chr(254-mtrCmds['left']))
-                ser.write(chr(mtrCmds['right']))
-                ser.write(chr(mtrCmds['mid']))
+                print("Sending... L: ", driveMtrCmds['left'], ", R: ", driveMtrCmds['right'], ", A: ", armCmd)
+                ser.write(chr(255))  # Start byte
+                ser.write(chr(driveMtrCmds['left']))
+                ser.write(chr(driveMtrCmds['right']))
                 ser.write(chr(armCmd))
 
-                # ser.write(startByte.to_bytes(1, byteorder='big'))
-                # ser.write(mtrCmds['left'].to_bytes(1, byteorder='big'))
-                # ser.write(mtrCmds['right'].to_bytes(1, byteorder='big'))
-                # ser.write(mtrCmds['mid'].to_bytes(1, byteorder='big'))
-                # ser.write(int(armCmd).to_bytes(1, byteorder='big'))
-                # ser.write(str(checksum).encode())
-                # ser.write(str("\n").encode())
-
-                prevMtrCmds = mtrCmds
+                prevdriveMtrCmds = driveMtrCmds
+                prevArmCmd = armCmd
                 prevTimeSent = time.time()*1000
                 time.sleep(.05)
     except KeyboardInterrupt:
         cleanup()
 
 
-def hDrive(xIn, yIn, rIn):
+################################################################################
+## @brief  Function to compute the drive motor PWM values for Arcade Drive
+## @param  yIn - raw joystick input from -1.0 to 1.0 for the Y-axis translation
+## @param  rIn - raw joystick input from -1.0 to 1.0 for the rotation
+## @return an array containing left and right motor commands
+################################################################################
+def arcadeDrive(yIn, rIn):
     
-    # Set drive command range constants
-    zeroCommand = 127  # the default value that corresponds to no motor power
-    cmdRange = 127     # the maximum amount (+/-) that the command can vary from the zero command
+    # Set output command range constants
+    zeroCommand = int(127)  # the default value that corresponds to no motor power
+    cmdRange = int(127)     # the maximum amount (+/-) that the command can vary from the zero command
     maxCommand = cmdRange
     minCommand = -cmdRange
 
-    # Set constants for the exponential functions for each drive command (x/y/r)
+    # Set constants for the exponential functions for each input (y/r)
     endExpConst = 1.44 # don't change this unless you've really looked over the math
-
-    xExpConst = 1.5  # exponential growth coefficient of the X-axis translation -- should be between 1.0-4.0
-    xEndpoint = 127  # maximum/minumum (+/-) for the X-axis translation
 
     yExpConst = 1.5  # exponential growth coefficient of the Y-axis translation -- should be between 1.0-4.0
     yEndpoint = 127  # maximum/minumum (+/-) for the Y-axis translation
 
-    rExpConst = 1.5  # exponential growth coefficient of the R-axis translation -- should be between 1.0-4.0
-    rEndpoint = 50  # maximum/minimum (+/-) for the rotation
+    rExpConst = 1.5  # exponential growth coefficient of the rotation -- should be between 1.0-4.0
+    rEndpoint = 50   # maximum/minimum (+/-) for the rotation
 
+    # Set a deadband for the raw joystick input
     deadband = 0.10
 
-    leftMtrBaseCmd = 2
-    rightMtrBaseCmd = 3
-    midMtrBaseCmd = 2
-
+    # Set a base command (within the command range above) to overcome gearbox resistance at low drive speeds
+    leftMtrBaseCmd = int(2)
+    rightMtrBaseCmd = int(3)
 
     # Save the negative-ness, which will be re-applied after the exponential function is applied
-    if xIn < 0:
-        xNeg = -1
-    else:
-        xNeg = 1
-
     if yIn < 0:
         yNeg = -1
     else:
@@ -134,8 +119,6 @@ def hDrive(xIn, yIn, rIn):
         rNeg = 1
 
     # Apply a deadband
-    if abs(xIn) < deadband:
-        xIn = 0
     if abs(yIn) < deadband:
         yIn = 0
     if abs(rIn) < deadband:
@@ -144,14 +127,12 @@ def hDrive(xIn, yIn, rIn):
     # print("X: ", xIn, " Y: ", yIn, " R: ", rIn)
     
     # Compute the drive commands using the exponential function (zero-based)
-    xCmd = int(xNeg*(math.pow(math.e,math.pow(math.fabs(xIn),xExpConst)/endExpConst)-1)*xEndpoint) # zero-based
-    yCmd = int(yNeg*(math.pow(math.e,math.pow(math.fabs(yIn),yExpConst)/endExpConst)-1)*yEndpoint) # zero-based
-    rCmd = int(rNeg*(math.pow(math.e,math.pow(math.fabs(rIn),rExpConst)/endExpConst)-1)*rEndpoint) # zero-based
+    yCmd = int(yNeg*(math.pow(math.e, math.pow(math.fabs(yIn), yExpConst)/endExpConst)-1)*yEndpoint) # zero-based
+    rCmd = int(rNeg*(math.pow(math.e, math.pow(math.fabs(rIn), rExpConst)/endExpConst)-1)*rEndpoint) # zero-based
 
     # Convert the drive commands into motor comands (zero-based)
     leftMtrCmd = yCmd + rCmd   # zero-based
     rightMtrCmd = yCmd - rCmd  # zero-based
-    midMtrCmd = xCmd           # zero-based
 
     # Add an offset for the minimum command to overcome the gearboxes
     if leftMtrCmd > 0:
@@ -162,16 +143,12 @@ def hDrive(xIn, yIn, rIn):
         rightMtrCmd = rightMtrCmd + rightMtrBaseCmd
     elif rightMtrCmd < 0:
         rightMtrCmd = rightMtrCmd - rightMtrBaseCmd
-    if midMtrCmd > 0:
-        midMtrCmd = midMtrCmd + midMtrBaseCmd
-    elif midMtrCmd < 0:
-        midMtrCmd = midMtrCmd - midMtrBaseCmd
 
-    # print("L: ", leftMtrCmd, " R: ", rightMtrCmd, " M: ", midMtrCmd)
+    # print("L: ", leftMtrCmd, " R: ", rightMtrCmd)
 
     # If the commands are greater than the maximum or less than the minimum, scale them back
-    maxMtrCmd = max(leftMtrCmd, rightMtrCmd, midMtrCmd)
-    minMtrCmd = min(leftMtrCmd, rightMtrCmd, midMtrCmd)
+    maxMtrCmd = max(leftMtrCmd, rightMtrCmd)
+    minMtrCmd = min(leftMtrCmd, rightMtrCmd)
     scaleFactor = 1.0
     if maxMtrCmd > maxCommand or minMtrCmd < minCommand:
         if maxMtrCmd > abs(minMtrCmd):
@@ -181,20 +158,77 @@ def hDrive(xIn, yIn, rIn):
 
     # print("maxMtrCmd: ", maxMtrCmd, " minMtrCmd: ", minMtrCmd, " maxCommand: ", maxCommand, " minCommand: ", minCommand, " scaleFactor: ", scaleFactor)
 
-    leftMtrCmdScaled = leftMtrCmd * scaleFactor
-    rightMtrCmdScaled = rightMtrCmd * scaleFactor
-    midMtrCmdScaled = midMtrCmd * scaleFactor
+    leftdriveMtrCmdScaled = leftMtrCmd * scaleFactor
+    rightdriveMtrCmdScaled = rightMtrCmd * scaleFactor
 
-    # print("L scaled: ", leftMtrCmd, " R scaled: ", rightMtrCmd, " M scaled: ", midMtrCmd)
+    # print("L scaled: ", leftdriveMtrCmdScaled, " R scaled: ", rightdriveMtrCmdScaled)
 
     # Shift the commands to be based on the zeroCommand (above)
-    leftMtrCmdFinal = int(leftMtrCmdScaled + zeroCommand)
-    rightMtrCmdFinal = int(rightMtrCmdScaled + zeroCommand)
-    midMtrCmdFinal = int(midMtrCmdScaled + zeroCommand)
+    leftMtrCmdFinal = int(leftdriveMtrCmdScaled + zeroCommand)
+    rightMtrCmdFinal = int(rightdriveMtrCmdScaled + zeroCommand)
 
-    return {'left':leftMtrCmdFinal, 'right':rightMtrCmdFinal, 'mid':midMtrCmdFinal}
+    return {'left':leftMtrCmdFinal, 'right':rightMtrCmdFinal}
 
 
+############################################################
+## @brief  Function to compute the arm drive command
+## @param  aIn - raw joystick input from -1.0 to 1.0
+## @return the arm command
+############################################################
+def armDrive(aIn):
+
+    # Set output command range constants
+    zeroCommand = int(127)  # the default value that corresponds to no motor power
+    cmdRange = int(127)     # the maximum amount (+/-) that the command can vary from the zero command
+    maxCommand = cmdRange
+    minCommand = -cmdRange
+
+    # Set constants for the exponential function
+    endExpConst = 1.44 # don't change this unless you've really looked over the math
+
+    expConst = 1.5  # exponential growth coefficient of the Y-axis translation -- should be between 1.0-4.0
+    endpoint = 127  # maximum/minumum (+/-) for the Y-axis translation
+
+    # Set a deadband for the raw joystick input
+    deadband = 0.0
+
+    # Set a base command (within the command range above) to overcome gearbox resistance at low drive speeds
+    baseCmd = int(5)
+
+    # Save the negative-ness, which will be re-applied after the exponential function is applied
+    if aIn < 0:
+        neg = -1
+    else:
+        neg = 1
+
+    # Apply a deadband
+    if abs(aIn) < deadband:
+        aIn = 0
+    
+    # Compute the motor command using the exponential function (zero-based)
+    aCmd = int(neg*(math.pow(math.e, math.pow(math.fabs(aIn), expConst)/endExpConst)-1)*endpoint) # zero-based
+
+    # Add an offset for the minimum command to overcome the gearboxes
+    if aCmd > 0:
+        aCmd = aCmd + baseCmd
+    elif aCmd < 0:
+        aCmd = aCmd - baseCmd
+
+    # If the command is greater than the maximum or less than the minimum, scale it back
+    if aCmd > maxCommand:
+        aCmd = maxCommand
+    elif aCmd < minCommand:
+        aCmd = minCommand
+
+    # Shift the command to be based on the zeroCommand (above)
+    aCmd = aCmd + zeroCommand
+
+    return aCmd
+
+
+############################################################
+## @brief Zero all the commands to the robot and exit
+############################################################
 def cleanup():
 
     print("Cleaning up and exiting")
