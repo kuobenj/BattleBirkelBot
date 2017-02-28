@@ -39,6 +39,10 @@ def main():
     GPIO.setup(rightMotorPin, GPIO.OUT)
     GPIO.setup(armMotorPin, GPIO.OUT)
 
+    GPIO.setup(LED1Pin, GPIO.OUT)
+    GPIO.setup(LED2Pin, GPIO.OUT)
+    GPIO.setup(LED3Pin, GPIO.OUT)
+
     leftMotorObject = GPIO.PWM(leftMotorPin, 50)
     rightMotorObject = GPIO.PWM(rightMotorPin, 50)
     armMotorObject = GPIO.PWM(armMotorPin, 50)
@@ -46,6 +50,16 @@ def main():
     leftMotorObject.start(cmd2pwm(MOTOR_IDLE))
     rightMotorObject.start(cmd2pwm(MOTOR_IDLE))
     armMotorObject.start(cmd2pwm(MOTOR_IDLE))
+
+    GPIO.output(LED1Pin, GPIO.LOW)
+    GPIO.output(LED2Pin, GPIO.LOW)
+    GPIO.output(LED3Pin, GPIO.LOW)
+
+    time.sleep(1)
+
+    GPIO.output(LED1Pin, GPIO.HIGH)
+    GPIO.output(LED2Pin, GPIO.HIGH)
+    GPIO.output(LED3Pin, GPIO.HIGH)
 
     try:
         while (done == False):
@@ -76,6 +90,20 @@ def main():
                 armDownTrig = -(armDownTrig+1)/2.0
                 armCmd = int(127 + (armUpTrig+armDownTrig)*127)
 
+            # Color depending on arm state
+            if armCmd == 127:
+                GPIO.output(LED1Pin, GPIO.HIGH)
+                GPIO.output(LED2Pin, GPIO.HIGH)
+                GPIO.output(LED3Pin, GPIO.HIGH)
+            elif armCmd < 127:
+                GPIO.output(LED1Pin, GPIO.LOW)
+                GPIO.output(LED2Pin, GPIO.LOW)
+                GPIO.output(LED3Pin, GPIO.HIGH)
+            else:
+                GPIO.output(LED1Pin, GPIO.HIGH)
+                GPIO.output(LED2Pin, GPIO.LOW)
+                GPIO.output(LED3Pin, GPIO.LOW)
+
             # Only send if the commands changed or if 200ms have elapsed
             if (prevMtrCmds['left'] != mtrCmds['left'] or
                 prevMtrCmds['right'] != mtrCmds['right'] or
@@ -90,7 +118,7 @@ def main():
 
                 prevMtrCmds = mtrCmds
                 prevTimeSent = time.time()*1000
-                time.sleep(.05)
+                # time.sleep(.05)
     except KeyboardInterrupt:
         cleanup()
 
