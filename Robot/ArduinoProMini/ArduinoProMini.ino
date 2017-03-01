@@ -71,6 +71,10 @@ void loop()
 //      Serial.print(", A:");
 //      Serial.print(arm);
 //      Serial.println("");
+      
+      left = map(left, 0, 254, 1000, 2000);
+      right = map(right, 0, 254, 1000, 2000);
+      arm = map(arm, 0, 254, 1000, 2000);
 
       if (arm > 1505)
       {
@@ -90,10 +94,6 @@ void loop()
         digitalWrite(ledPin2, HIGH);
         digitalWrite(ledPin3, HIGH);
       }
-      
-      left = map(left, 0, 254, 1000, 2000);
-      right = map(right, 0, 254, 1000, 2000);
-      arm = map(arm, 0, 254, 1000, 2000);
 
       leftSrvo.writeMicroseconds(left);
       rightSrvo.writeMicroseconds(right);
