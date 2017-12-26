@@ -42,6 +42,8 @@ Encoder inttEnc(inttEncPinA, inttEncPinB);
 
 unsigned long lastTimeRX = 0;
 
+
+
 void setup()
 {
 	//57600 baud, pin 13 is an indicator LED
@@ -78,6 +80,8 @@ void setup()
 	digitalWrite(boardLedPin, LOW);
 	delay(200);
 }
+
+
 
 void loop()
 {
