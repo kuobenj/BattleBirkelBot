@@ -1,6 +1,8 @@
 #include <Servo.h>
 #include <Encoder.h>
+#include <PID_v1.h>
 
+/*==============================GLOBAL VARS===================================*/
 //Motor Pins
 const unsigned char leftPin = 5;
 const unsigned char rightPin = 6;
@@ -40,10 +42,17 @@ Servo armSrvo;
 Encoder inttEnc(inttEncPinA, inttEncPinB);
 // Encoder pollEnc(pollEncPinA, pollEncPinB);
 
+//PID object for arm
+//TODO: SET GAINS
+double myPID_Setpoint, myPID_Input, myPID_Output;
+double Kp=2, Ki=5, Kd=1; //Gains
+PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, DIRECT);
+
+//var for checking if comms are lost
 unsigned long lastTimeRX = 0;
 
 
-
+/*=================================SET UP=====================================*/
 void setup()
 {
 	//57600 baud, pin 13 is an indicator LED
@@ -70,6 +79,11 @@ void setup()
 	digitalWrite(ledPin2, HIGH);
 	digitalWrite(ledPin3, HIGH);
 
+	// Set Up Arm PID
+	//turn the PID on
+	myPID_Setpoint = 0.0; //TODO: Change this to meaningful value
+	myPID.SetMode(AUTOMATIC);
+
 	// Give a few blinks to show that the code is up and running
 	digitalWrite(boardLedPin, HIGH);
 	delay(200);
@@ -82,64 +96,70 @@ void setup()
 }
 
 
-
+/*=================================LOOP=======================================*/
 void loop()
 {
 	if (Serial.available() >= 4) {
-	int start = Serial.read();
-	// Look for the start byte (255, or 0xFF)
-	if (start == 255) {
-		// Indicate that we have signal by illuminating the on-board LED
-		digitalWrite(boardLedPin, HIGH);
-		lastTimeRX = millis();
-		
-		int left = Serial.read();
-		int right = Serial.read();
-		int arm = Serial.read();
+		int start = Serial.read();
+		// Look for the start byte (255, or 0xFF)
+		if (start == 255) {
+			// Indicate that we have signal by illuminating the on-board LED
+			digitalWrite(boardLedPin, HIGH);
+			lastTimeRX = millis();
+			
+			int left = Serial.read();
+			int right = Serial.read();
+			int arm = Serial.read();
 
-		// Debug output
-		// Serial.print("L: ");
-		// Serial.print(left);
-		// Serial.print(", R:");
-		// Serial.print(right);
-		// Serial.print(", A:");
-		// Serial.print(arm);
-		// Serial.print(", Enc:");
-		// Serial.print(inttEnc.read());
-		// Serial.println("");
-		
-		left = map(left, 0, 254, 1000, 2000);
-		right = map(right, 0, 254, 1000, 2000);
-		arm = map(arm, 0, 254, 1000, 2000);
+			// Debug output
+			// Serial.print("L: ");
+			// Serial.print(left);
+			// Serial.print(", R:");
+			// Serial.print(right);
+			// Serial.print(", A:");
+			// Serial.print(arm);
+			// Serial.print(", Enc:");
+			// Serial.print(inttEnc.read());
+			// Serial.println("");
+			
+			left = map(left, 0, 254, 1000, 2000);
+			right = map(right, 0, 254, 1000, 2000);
+			arm = map(arm, 0, 254, 1000, 2000);
 
-		if (arm > 1505)
-		{
-		digitalWrite(ledPin1, HIGH);
-		digitalWrite(ledPin2, LOW);
-		digitalWrite(ledPin3, LOW);
-		}
-		else if(arm < 1495)
-		{
-		digitalWrite(ledPin1, LOW);
-		digitalWrite(ledPin2, LOW);
-		digitalWrite(ledPin3, HIGH);
-		}
-		else
-		{
-		digitalWrite(ledPin1, HIGH);
-		digitalWrite(ledPin2, HIGH);
-		digitalWrite(ledPin3, HIGH);
-		}
+			if (arm > 1505)
+			{
+			digitalWrite(ledPin1, HIGH);
+			digitalWrite(ledPin2, LOW);
+			digitalWrite(ledPin3, LOW);
+			}
+			else if(arm < 1495)
+			{
+			digitalWrite(ledPin1, LOW);
+			digitalWrite(ledPin2, LOW);
+			digitalWrite(ledPin3, HIGH);
+			}
+			else
+			{
+			digitalWrite(ledPin1, HIGH);
+			digitalWrite(ledPin2, HIGH);
+			digitalWrite(ledPin3, HIGH);
+			}
 
-		leftSrvo.writeMicroseconds(left);
-		rightSrvo.writeMicroseconds(right);
-		armSrvo.writeMicroseconds(arm);
-	}
+			myPID_Input = (double) inttEnc.read();
+			myPID_Setpoint = (double) arm;
+			myPID.Compute();
+			arm = (int) myPID_Output;
+
+			leftSrvo.writeMicroseconds(left);
+			rightSrvo.writeMicroseconds(right);
+			armSrvo.writeMicroseconds(arm);
+		}
 	}
 	checkComms();
 }
 
 
+/*============================CUSTOM FUNC=====================================*/
 void checkComms() {
 	if (millis() - lastTimeRX > 250) {
 	// Set all motors to neutral
