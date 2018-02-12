@@ -111,6 +111,9 @@ void loop()
 			int right = Serial.read();
 			int arm = Serial.read();
 
+			// Bailout if any value is invalid
+			if (left == 255 || right == 255 || arm == 255) goto bailout;
+
 			// Debug output
 			// Serial.print("L: ");
 			// Serial.print(left);
@@ -155,6 +158,7 @@ void loop()
 			armSrvo.writeMicroseconds(arm);
 		}
 	}
+bailout:
 	checkComms();
 }
 
