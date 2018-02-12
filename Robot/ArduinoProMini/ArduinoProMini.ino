@@ -15,9 +15,9 @@ const unsigned char armPin = 9;
 //Lights
 const unsigned char boardLedPin = 13;
 	//LED Strip
-const unsigned char ledPin1 = 14; //blue?
-const unsigned char ledPin2 = 15; //red?
-const unsigned char ledPin3 = 16; //green?
+const unsigned char ledPinBlue = 14;
+const unsigned char ledPinRed = 15;
+const unsigned char ledPinGreen = 16;
 
 //Encoder Pins
 const unsigned char inttEncPinA = 2;
@@ -66,18 +66,18 @@ void setup()
 	armSrvo.attach(armPin);
 
 	// Set the modes of the feedback LED pins
-	pinMode(ledPin1,OUTPUT);
-	pinMode(ledPin2,OUTPUT);
-	pinMode(ledPin3,OUTPUT);
+	pinMode(ledPinBlue,OUTPUT);
+	pinMode(ledPinRed,OUTPUT);
+	pinMode(ledPinGreen,OUTPUT);
 
 	// Write initial values to the pins
 	leftSrvo.writeMicroseconds(1500);
 	rightSrvo.writeMicroseconds(1500);
 	armSrvo.writeMicroseconds(1500);
 	
-	digitalWrite(ledPin1, HIGH);
-	digitalWrite(ledPin2, HIGH);
-	digitalWrite(ledPin3, HIGH);
+	digitalWrite(ledPinBlue, LOW);
+	digitalWrite(ledPinRed, LOW);
+	digitalWrite(ledPinGreen, LOW);
 
 	// Set Up Arm PID
 	//turn the PID on
@@ -128,21 +128,21 @@ void loop()
 
 			if (arm > 1505)
 			{
-			digitalWrite(ledPin1, HIGH);
-			digitalWrite(ledPin2, LOW);
-			digitalWrite(ledPin3, LOW);
+			digitalWrite(ledPinBlue, HIGH);
+			digitalWrite(ledPinRed, LOW);
+			digitalWrite(ledPinGreen, LOW);
 			}
 			else if(arm < 1495)
 			{
-			digitalWrite(ledPin1, LOW);
-			digitalWrite(ledPin2, LOW);
-			digitalWrite(ledPin3, HIGH);
+			digitalWrite(ledPinBlue, LOW);
+			digitalWrite(ledPinRed, LOW);
+			digitalWrite(ledPinGreen, HIGH);
 			}
 			else
 			{
-			digitalWrite(ledPin1, HIGH);
-			digitalWrite(ledPin2, HIGH);
-			digitalWrite(ledPin3, HIGH);
+			digitalWrite(ledPinBlue, HIGH);
+			digitalWrite(ledPinRed, HIGH);
+			digitalWrite(ledPinGreen, HIGH);
 			}
 
 			myPID_Input = (double) inttEnc.read();
@@ -168,9 +168,9 @@ void checkComms() {
 	armSrvo.writeMicroseconds(1500);
 	// Indicate that we have lost comms by turning off the on-board LED
 	digitalWrite(boardLedPin, LOW);
-	digitalWrite(ledPin1, LOW);
-	digitalWrite(ledPin2, HIGH);
-	digitalWrite(ledPin3, LOW);
+	digitalWrite(ledPinBlue, LOW);
+	digitalWrite(ledPinRed, HIGH);
+	digitalWrite(ledPinGreen, LOW);
 	// delay(10);
 	// Serial.println("No comms");
 	}
