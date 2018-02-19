@@ -99,7 +99,7 @@ void setup()
 /*=================================LOOP=======================================*/
 void loop()
 {
-	if (Serial.available() >= 4) {
+	if (Serial.available() >= 5) {
 		int start = Serial.read();
 		// Look for the start byte (255, or 0xFF)
 		if (start == 255) {
@@ -109,8 +109,12 @@ void loop()
 			
 			int left = Serial.read();
 			int right = Serial.read();
-			int arm = Serial.read();
+			int armCmd = Serial.read();
+			int armFlags = Serial.read();
 
+			char isManualMode = armFlags & 1 ? 1 : 0;
+			char isZeroRequest = armFlags & 2 ? 1 : 0;
+ 
 			// Debug output
 			// Serial.print("L: ");
 			// Serial.print(left);
@@ -126,23 +130,20 @@ void loop()
 			right = map(right, 0, 254, 1000, 2000);
 			arm = map(arm, 0, 254, 1000, 2000);
 
-			if (arm > 1505)
-			{
-			digitalWrite(ledPin1, HIGH);
-			digitalWrite(ledPin2, LOW);
-			digitalWrite(ledPin3, LOW);
+			if (arm > 1505) {
+				digitalWrite(ledPin1, HIGH);
+				digitalWrite(ledPin2, LOW);
+				digitalWrite(ledPin3, LOW);
 			}
-			else if(arm < 1495)
-			{
-			digitalWrite(ledPin1, LOW);
-			digitalWrite(ledPin2, LOW);
-			digitalWrite(ledPin3, HIGH);
+			else if(arm < 1495) {
+				digitalWrite(ledPin1, LOW);
+				digitalWrite(ledPin2, LOW);
+				digitalWrite(ledPin3, HIGH);
 			}
-			else
-			{
-			digitalWrite(ledPin1, HIGH);
-			digitalWrite(ledPin2, HIGH);
-			digitalWrite(ledPin3, HIGH);
+			else {
+				digitalWrite(ledPin1, HIGH);
+				digitalWrite(ledPin2, HIGH);
+				digitalWrite(ledPin3, HIGH);
 			}
 
 			myPID_Input = (double) inttEnc.read();
