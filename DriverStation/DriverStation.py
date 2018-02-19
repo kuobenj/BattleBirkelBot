@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from enum import Enum
 import pygame
 import time
 import os
@@ -11,6 +12,22 @@ import math
 # To check what serial ports are available in Linux, use the bash command: dmesg | grep tty
 # To check what serial ports are available in Windows, use the cmd command: wmic path Win32_SerialPort
 comPort = 'COM3'
+
+# Ids of buttons used to control arm in auto mode.
+armAutoBtnIds = [4, 5]
+
+# Id of button used to revert back to auto mode.
+armBtnEnterAutoId = 10
+# Id of button used to zero the arm.
+armBtnZeroId = 11
+
+# Id of axis for analog trigger arm.
+armBtnAnalogTriggerId = 2
+
+# Arm mode.
+class ArmMode(Enum):
+    AUTO = 0
+    MANUAL = 1
 
 def main():
 
@@ -29,7 +46,9 @@ def main():
     # Local variables
     prevdriveMtrCmds = {'left':0, 'right':0}
     prevArmCmd = 0
+    prevArmFlags = 0
     prevTimeSent = 0
+    armMode = ArmMode.AUTO
     done = False
 
     try:
@@ -37,30 +56,52 @@ def main():
 
             pygame.event.pump() # This line is needed to process the gamepad packets
 
-            # Get the raw values for drive translation/rotation and arm using the gamepad
+            # Get the raw values for drive translation/rotation using the gamepad.
             yRaw = joysticks[0].get_axis(1)  # Y-axis translation comes from the left joystick Y axis
             rRaw = -joysticks[0].get_axis(4) # Rotation comes from the right joystick X axis
-            aRaw = -joysticks[0].get_axis(2) # Raising/lowering the arm comes from the analog triggers
+
+
+            # Get the raw values for the arm using the gamepad.
+            armAutoNumBtns = (1 if joysticks[0].get_button(armAutoBtnIds[0]) else 0) + (1 if joysticks[0].get_button(armAutoBtnIds[1]) else 0)
+            armBtnEnterAuto = joysticks[0].get_button(armBtnEnterAutoId)
+            armBtnZero = joysticks[0].get_button(armBtnZeroId)
+            armRawManual = -joysticks[0].get_axis(armBtnAnalogTriggerId) # Raising/lowering the arm comes from the analog triggers
+            armCmdManual = armDrive(armRawManual)
+
+            # Check if a request to switch to AUTO was made.
+            if (armBtnAutoReq):
+                armMode = ArmMode.AUTO
+
+            # If the analog trigger was pressed, switch to manual mode.
+            if (armCmdManual != 0):
+                armMode = ArmMode.MANUAL
+
+            # Arm command: first byte: position. Second byte: flags.
+            # In auto mode: 0 means LOWEST, 1 means LOW, and 2 means HIGH.
+            # Flags:
+            #  0:Mode.             Auto (0); Manual (1).
+            #  1:Zero requested.   No (0); Yes (1).
+
+            armCmd = 0
+            armFlags = 0
+
+            if (armMode == ArmMode.AUTO): 
+                armCmd = armAutoNumBtns
+            else:
+                armCmd = armCmdManual
+                armFlags |= 1 (0000001)
+                if (armBtnZero):
+                    armFlags |= 2 (00000010)
+
 
             # Get the drive motor commands for Arcade Drive
             driveMtrCmds = arcadeDrive(yRaw, rRaw)
-
-            # Get the arm motor command
-            armCmd = armDrive(aRaw)
-            
-            # Allow the bumpers to control the arm, overriding the analog triggers
-            armUpBtn = joysticks[0].get_button(4)
-            armDownBtn = joysticks[0]. get_button(5)
-            btnCmd = int(50)
-            if (armDownBtn):
-                armCmd = 127+btnCmd
-            elif (armUpBtn):
-                armCmd = 127-btnCmd
 
             # Only send if the commands changed or if 200ms have elapsed
             if (prevdriveMtrCmds['left'] != driveMtrCmds['left'] or
                 prevdriveMtrCmds['right'] != driveMtrCmds['right'] or
                 prevArmCmd != armCmd or
+                prevArmFlags != armFlags or
                 time.time()*1000 > prevTimeSent + 200):
 
                 print("Sending... L: ", driveMtrCmds['left'], ", R: ", driveMtrCmds['right'], ", A: ", armCmd)
@@ -68,9 +109,11 @@ def main():
                 ser.write(chr(driveMtrCmds['left']))
                 ser.write(chr(driveMtrCmds['right']))
                 ser.write(chr(armCmd))
+                ser.write(chr(armFlags))
 
                 prevdriveMtrCmds = driveMtrCmds
                 prevArmCmd = armCmd
+                prevArmFlag = armFlag
                 prevTimeSent = time.time()*1000
                 time.sleep(.05)
     except KeyboardInterrupt:
