@@ -51,6 +51,9 @@ PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, DIRECT);
 //var for checking if comms are lost
 unsigned long lastTimeRX = 0;
 
+//Local testing
+const bool localTest = true;
+int loopCount = 0;
 
 /*=================================SET UP=====================================*/
 void setup()
@@ -99,17 +102,17 @@ void setup()
 /*=================================LOOP=======================================*/
 void loop()
 {
-  if (Serial.available() >= 4) {
-    int start = Serial.read();
+  if (localTest || Serial.available() >= 4) {
+    int start = serialRead();
     // Look for the start byte (255, or 0xFF)
     if (start == 255) {
       // Indicate that we have signal by illuminating the on-board LED
       digitalWrite(boardLedPin, HIGH);
       lastTimeRX = millis();
       
-      int left = Serial.read();
-      int right = Serial.read();
-      int arm = Serial.read();
+      int left = serialRead();
+      int right = serialRead();
+      int arm = serialRead();
 
       // Bailout if any value is invalid
       if (left == 255 || right == 255 || arm == 255) {
@@ -125,8 +128,10 @@ void loop()
       // Serial.print(arm);
       // Serial.print(", Enc:");
       // Serial.print(inttEnc.read());
+      // Serial.print(", Count:");
+      // Serial.print(++loopCount);
       // Serial.println("");
-      
+
       left = map(left, 0, 254, 1000, 2000);
       right = map(right, 0, 254, 1000, 2000);
       arm = map(arm, 0, 254, 1000, 2000);
@@ -180,4 +185,36 @@ void checkComms() {
   // delay(10);
   // Serial.println("No comms");
   }
+}
+
+/*============================LOCAL TEST=====================================*/
+int serialData[] = {255, 127, 127, 127};
+int serialIndex = 0;
+
+int serialRead() {
+  if (!localTest) {
+    return Serial.read();
+  }
+
+  // Simulate joystick input from the keyboard
+  if (Serial.available() > 0) {
+    int serialCmd = Serial.read();
+    Serial.println(serialCmd);
+    if (serialCmd == 102) {        // f - forward
+      serialData[1] = min(serialData[1] + 10, 254);
+      serialData[2] = min(serialData[2] + 10, 254);
+    } else if (serialCmd == 115) { // s - stop
+      serialData[1] = 127;
+      serialData[2] = 127;
+    } else if (serialCmd == 114) { // r - reverse
+      serialData[1] = max(serialData[1] - 10, 0);
+      serialData[2] = max(serialData[2] - 10, 0);
+    }
+  }
+  int value = serialData[serialIndex];
+  ++serialIndex;
+  if (serialIndex > 3) {
+    serialIndex = 0;
+  }
+  return value;
 }
