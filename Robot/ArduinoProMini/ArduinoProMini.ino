@@ -106,7 +106,12 @@ void loop()
     // Look for the start byte (255, or 0xFF)
     if (serialRead() == 255) {
       lastTimeRX = millis();
-      processCmd(serialRead(), serialRead(), serialRead());
+      int left = serialRead();
+      int right = serialRead();
+      int arm = serialRead();
+      if (left < 255 && right < 255 && arm < 255) {
+        processCmd(left, right, arm);
+      }
     }
   }
   if (millis() - lastTimeRX > 250) {
@@ -133,12 +138,23 @@ void processCmd(int left, int right, int arm) {
   // Indicate that we have signal by illuminating the on-board LED
   digitalWrite(boardLedPin, HIGH);
 
-  if (left == 255 || right == 255 || arm == 255) {
-    // Bailout if any value is invalid
-    return;
+  if (arm < 120 || arm == 127 || arm > 134) {
+    runMotors(left, right, arm);
+  } else if (arm >= 124 && arm <= 126) {
+    // Combine left and right to get a value between approx. -160.00 and 160.00
+    // then place that value into one of the PID gains.
+    double value = (double) ((((left & 0xFF) << 7) | (right & 0x7F)) / 100);
+    if (arm = 124) {
+      Kp = value;
+    } else if (arm = 125) {
+      Ki = value;
+    } else if (arm = 126) {
+      // Client should set Kp and Ki before setting Kd
+      // then update the PID with all three values at once.
+      Kd = value;
+      myPID.SetTunings(Kp, Ki, Kd);
+    }
   }
-
-  runMotors(left, right, arm);
 }
 
 void runMotors(int left, int right, int arm) {
