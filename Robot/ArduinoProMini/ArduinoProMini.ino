@@ -103,87 +103,87 @@ void setup()
 void loop()
 {
   if (localTest || Serial.available() >= 4) {
-    int start = serialRead();
     // Look for the start byte (255, or 0xFF)
-    if (start == 255) {
-      // Indicate that we have signal by illuminating the on-board LED
-      digitalWrite(boardLedPin, HIGH);
+    if (serialRead() == 255) {
       lastTimeRX = millis();
-      
-      int left = serialRead();
-      int right = serialRead();
-      int arm = serialRead();
-
-      // Bailout if any value is invalid
-      if (left == 255 || right == 255 || arm == 255) {
-        goto bailout;
-      }
-
-      // Debug output
-      // Serial.print("L: ");
-      // Serial.print(left);
-      // Serial.print(", R:");
-      // Serial.print(right);
-      // Serial.print(", A:");
-      // Serial.print(arm);
-      // Serial.print(", Enc:");
-      // Serial.print(inttEnc.read());
-      // Serial.print(", Count:");
-      // Serial.print(++loopCount);
-      // Serial.println("");
-
-      left = map(left, 0, 254, 1000, 2000);
-      right = map(right, 0, 254, 1000, 2000);
-      arm = map(arm, 0, 254, 1000, 2000);
-
-      if (arm > 1505)
-      {
-      digitalWrite(ledPinBlue, HIGH);
-      digitalWrite(ledPinRed, LOW);
-      digitalWrite(ledPinGreen, LOW);
-      }
-      else if(arm < 1495)
-      {
-      digitalWrite(ledPinBlue, LOW);
-      digitalWrite(ledPinRed, LOW);
-      digitalWrite(ledPinGreen, HIGH);
-      }
-      else
-      {
-      digitalWrite(ledPinBlue, HIGH);
-      digitalWrite(ledPinRed, HIGH);
-      digitalWrite(ledPinGreen, HIGH);
-      }
-
-      myPID_Input = (double) inttEnc.read();
-      myPID_Setpoint = (double) arm;
-      myPID.Compute();
-      arm = (int) myPID_Output;
-
-      leftSrvo.writeMicroseconds(left);
-      rightSrvo.writeMicroseconds(right);
-      armSrvo.writeMicroseconds(arm);
+      processCmd(serialRead(), serialRead(), serialRead());
     }
   }
-bailout:
-  checkComms();
+  if (millis() - lastTimeRX > 250) {
+    idle();
+  }
 }
 
 
 /*============================CUSTOM FUNC=====================================*/
-void checkComms() {
-  if (millis() - lastTimeRX > 250) {
+void processCmd(int left, int right, int arm) {
+  // Debug output
+  // Serial.print("L: ");
+  // Serial.print(left);
+  // Serial.print(", R:");
+  // Serial.print(right);
+  // Serial.print(", A:");
+  // Serial.print(arm);
+  // Serial.print(", Enc:");
+  // Serial.print(inttEnc.read());
+  // Serial.print(", Count:");
+  // Serial.print(++loopCount);
+  // Serial.println("");
+
+  // Indicate that we have signal by illuminating the on-board LED
+  digitalWrite(boardLedPin, HIGH);
+
+  if (left == 255 || right == 255 || arm == 255) {
+    // Bailout if any value is invalid
+    return;
+  }
+
+  runMotors(left, right, arm);
+}
+
+void runMotors(int left, int right, int arm) {
+  left = map(left, 0, 254, 1000, 2000);
+  right = map(right, 0, 254, 1000, 2000);
+  arm = map(arm, 0, 254, 1000, 2000);
+
+  updateLEDs(arm);
+
+  myPID_Input = (double) inttEnc.read();
+  myPID_Setpoint = (double) arm;
+  myPID.Compute();
+  arm = (int) myPID_Output;
+
+  leftSrvo.writeMicroseconds(left);
+  rightSrvo.writeMicroseconds(right);
+  armSrvo.writeMicroseconds(arm);
+}
+
+void idle() {
   // Set all motors to neutral
   rightSrvo.writeMicroseconds(1500);
   leftSrvo.writeMicroseconds(1500);
   armSrvo.writeMicroseconds(1500);
+
   // Indicate that we have lost comms by turning off the on-board LED
   digitalWrite(boardLedPin, LOW);
   digitalWrite(ledPinBlue, LOW);
   digitalWrite(ledPinRed, HIGH);
   digitalWrite(ledPinGreen, LOW);
-  // delay(10);
-  // Serial.println("No comms");
+}
+
+void updateLEDs(int arm) {
+  if (arm > 1505) {
+    digitalWrite(ledPinBlue, HIGH);
+    digitalWrite(ledPinRed, LOW);
+    digitalWrite(ledPinGreen, LOW);
+  } else if(arm < 1495) {
+    digitalWrite(ledPinBlue, LOW);
+    digitalWrite(ledPinRed, LOW);
+    digitalWrite(ledPinGreen, HIGH);
+  } else {
+    digitalWrite(ledPinBlue, HIGH);
+    digitalWrite(ledPinRed, HIGH);
+    digitalWrite(ledPinGreen, HIGH);
   }
 }
 
