@@ -33,6 +33,18 @@ Servo armSrvo;
 // Servo aux1Srvo;
 // Servo aux2Srvo;
 
+// If true, arm input = angle
+// If false arm input = motor direction and speed (default)
+bool armAngleMode = false;
+
+// The encoder value at which the arm is considered to be
+// all the way down at "zero" angle.
+int armZeroPoint = 0;
+
+// The multiplier used to convert the arm angle (0 to 250)
+// to the desired encoder value.
+double armScale = 100;
+
 //Encoders
 /* If the Encoder API is not installed in your Arduino Environement:
   - Go to 'Sketch' -> 'Include Library' -> 'Manage Libraries...'
@@ -46,7 +58,7 @@ Encoder inttEnc(inttEncPinA, inttEncPinB);
 //TODO: SET GAINS
 double myPID_Setpoint, myPID_Input, myPID_Output;
 double Kp=2, Ki=5, Kd=1; //Gains
-PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, DIRECT);
+PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, P_ON_M, DIRECT);
 
 //var for checking if comms are lost
 unsigned long lastTimeRX = 0;
@@ -84,6 +96,7 @@ void setup() {
   //turn the PID on
   myPID_Setpoint = 0.0; //TODO: Change this to meaningful value
   myPID.SetMode(AUTOMATIC);
+  myPID.SetOutputLimits(-500, 500);
 
   // Give a few blinks to show that the code is up and running
   blinkBoardLed(2, 200);
@@ -129,27 +142,56 @@ void processCmd(int left, int right, int arm) {
   // Indicate that we have signal by illuminating the on-board LED
   digitalWrite(boardLedPin, HIGH);
 
-  // Special values:
-  // arm 123 hold current position
-  // arm 124 set angle mode
-  // arm 125 set motor mode (default)
-  // left/right/arm 126 setup - see main loop
-  // left/right/arm 127 idle, off, not spinning
-  moveArm(arm);
+  // Special values: 123 to 126
+  // left/right/arm all == 126 is setup cmd - see main loop
+  if (arm == 123) {        // reset current arm encoder value as zero point
+    armZeroPoint = inttEnc.read();
+  } else if (arm == 124) { // set arm in angle mode
+    armAngleMode = true;
+  } else if (arm == 125) { // set arm in motor mode (default)
+    armAngleMode = false;
+  } else if (armAngleMode) {
+    setArmAngle(arm);
+  } else {
+    moveArm(arm);
+  }
   runWheels(left, right);
+}
+
+void setArmAngle(int arm) {
+  // Omit the reserved values listed in processCmd (123 - 126)
+  // so that the arm value represents a contiguous range of values.
+  // arm == 127 is valid angle, but represents idle when armAngleMode == false.
+  if (arm > 123) arm -= 4;
+
+  // Multiply the desired arm angle by armScale
+  // to get the desired encoder angle.
+  myPID_Setpoint = ((double) arm) * armScale;
+
+  // Subtract the armZeroPoint from the current encoder value
+  // to get the current encoder angle.
+  myPID_Input = (double) (inttEnc.read() - armZeroPoint);
+  myPID.Compute();
+
+  // Debug output
+   Serial.print("  PID arm: ");
+   Serial.print(arm);
+   Serial.print(", setpoint: ");
+   Serial.print(myPID_Setpoint);
+   Serial.print(", input: ");
+   Serial.print(myPID_Input);
+   Serial.print(", output:");
+   Serial.print((int) myPID_Output + 1500);
+   Serial.println("");
+
+  armSrvo.writeMicroseconds((int) myPID_Output + 1500);
+  updateLEDs(arm);
 }
 
 void moveArm(int arm) {
   arm = map(arm, 0, 254, 1000, 2000);
-
-  updateLEDs(arm);
-
-  myPID_Input = (double) inttEnc.read();
-  myPID_Setpoint = (double) arm;
-  myPID.Compute();
-  arm = (int) myPID_Output;
-
   armSrvo.writeMicroseconds(arm);
+  updateLEDs(arm);
 }
 
 void runWheels(int left, int right) {
@@ -198,6 +240,18 @@ void blinkBoardLed(int count, int duration) {
   }
 }
 
+// Specialized command for setting up the PID controller.
+// Command format:
+//   255, 126, 126, 126,
+//     <Mode char>,            <--- either "A" for automatic
+//                                      or "M" for manual
+//     <Proportional char>,    <--- either "E" for proportional on error
+//                                      or "M" for proportional on measurement
+//     <# chars> <Kp>,         <--- string representing value of Kp
+//     <# chars> <Ki>,         <--- string representing value of Ki
+//     <# chars> <Kd>,         <--- string representing value of Kd
+//     <# chars> <armScale>,   <--- string representing value of armScale
+//     <checksum>              <--- sum all chars excluding lengths & 0xFF
 void processSetup() {
   Serial.println("Setup:");
 
@@ -205,9 +259,19 @@ void processSetup() {
   // If needed, consider Fletcher checksum
   int checksum = 0;
 
+  char mode = serialRead();
+  checksum += mode;
+  Serial.print("  Mode automatic/manual: ");
+  Serial.println(mode);
+
+  char proportional = serialRead();
+  checksum += proportional;
+  Serial.print("  Proportional on error/measurement: ");
+  Serial.println(proportional);
+
   // Read 3 strings and convert to doubles
-  double values[3];
-  for (int valueIndex = 0; valueIndex < 3; ++valueIndex) {
+  double values[4];
+  for (int valueIndex = 0; valueIndex < 4; ++valueIndex) {
     // Read string as # characters followed by characters
     int strLen = serialRead();
     char strChars[strLen + 1];
@@ -231,10 +295,22 @@ void processSetup() {
     return;
   }
 
+  if (mode == 'M') {
+    myPID.SetMode(MANUAL);
+  } else {
+    myPID.SetMode(AUTOMATIC);
+  }
   Kp = values[0];
   Ki = values[1];
   Kd = values[2];
-  myPID.SetTunings(Kp, Ki, Kd);
+  armScale = values[3];
+  int pOn;
+  if (proportional == 'E') {
+    pOn = P_ON_E;
+  } else {
+    pOn = P_ON_M;
+  }
+  myPID.SetTunings(Kp, Ki, Kd, pOn);
   Serial.println("  PID gains set");
   blinkBoardLed(5, 50);
 }
@@ -244,12 +320,13 @@ int serialData[] = {255, 127, 127, 127};
 int serialIndex = 0;
 
 char setupData[][10] = { // max string size + 1 for null terminator
-  {255, 126, 126, 126},
+  {255, 126, 126, 126, 'A', 'M'}, // setup signal + mode + proportional
   "2.0", // Kp
   "5.17", // Ki
   "1.3", // Kd
+  "200.0", // armScale
 };
-int setupChecksum = 237;
+int setupChecksum = 107;
 int setupIndex = 0;
 int setupCount = 0;
 
@@ -266,7 +343,7 @@ int serialRead() {
   // Local test
   // Simulate client setup command
   if (setupCount >= 0) {
-    while (setupCount < 4) {
+    while (setupCount < 5) {
       if (setupIndex == -1) {
         ++setupIndex;
         return String(setupData[setupCount]).length();
@@ -286,15 +363,33 @@ int serialRead() {
   if (Serial.available() > 0) {
     int serialCmd = Serial.read();
     Serial.println(serialCmd);
-    if (serialCmd == 102) {        // f - forward
+    if (serialCmd == 'f') {        // forward
       serialData[1] = min(serialData[1] + 10, 254);
       serialData[2] = min(serialData[2] + 10, 254);
-    } else if (serialCmd == 115) { // s - stop
+    } else if (serialCmd == 's') { // stop
       serialData[1] = 127;
       serialData[2] = 127;
-    } else if (serialCmd == 114) { // r - reverse
+    } else if (serialCmd == 'r') { // reverse
       serialData[1] = max(serialData[1] - 10, 0);
       serialData[2] = max(serialData[2] - 10, 0);
+    } else if (serialCmd == 'u') { // arm up
+      int arm = min(serialData[3] + 1, 250);
+      if (arm >= 123 && arm <= 126) arm = 127;
+      serialData[3] = arm;
+    } else if (serialCmd == 'd') { // arm down
+      int arm = max(serialData[3] - 1, 0);
+      if (arm >= 123 && arm <= 126) arm = 127;
+      serialData[3] = arm;
+    } else if (serialCmd == '1') { // set arm angle to 1 degree
+      serialData[3] = 1;
+    } else if (serialCmd == 'z') { // set arm zero point
+      serialData[3] = 123;
+    } else if (serialCmd == 'a') { // toggle arm angle/motor mode
+      if (!armAngleMode) {
+        serialData[3] = 124;
+      } else {
+        serialData[3] = 125;
+      }
     }
   }
   int value = serialData[serialIndex];
