@@ -52,12 +52,10 @@ PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, DIRECT);
 unsigned long lastTimeRX = 0;
 
 //Local testing
-const bool localTest = true;
 int loopCount = 0;
 
 /*=================================SET UP=====================================*/
-void setup()
-{
+void setup() {
   //57600 baud, pin 13 is an indicator LED
   pinMode(boardLedPin, OUTPUT);
   Serial.begin(57600);
@@ -88,28 +86,21 @@ void setup()
   myPID.SetMode(AUTOMATIC);
 
   // Give a few blinks to show that the code is up and running
-  digitalWrite(boardLedPin, HIGH);
-  delay(200);
-  digitalWrite(boardLedPin, LOW);
-  delay(200);
-  digitalWrite(boardLedPin, HIGH);
-  delay(200);
-  digitalWrite(boardLedPin, LOW);
-  delay(200);
+  blinkBoardLed(2, 200);
 }
 
-
 /*=================================LOOP=======================================*/
-void loop()
-{
-  if (localTest || Serial.available() >= 4) {
+void loop() {
+  if (serialAvailable()) {
     // Look for the start byte (255, or 0xFF)
     if (serialRead() == 255) {
       lastTimeRX = millis();
       int left = serialRead();
       int right = serialRead();
       int arm = serialRead();
-      if (left < 255 && right < 255 && arm < 255) {
+      if (left == 126 && right == 126 && arm == 126) {
+        processSetup();
+      } else if (left < 255 && right < 255 && arm < 255) {
         processCmd(left, right, arm);
       }
     }
@@ -138,28 +129,17 @@ void processCmd(int left, int right, int arm) {
   // Indicate that we have signal by illuminating the on-board LED
   digitalWrite(boardLedPin, HIGH);
 
-  if (arm < 120 || arm == 127 || arm > 134) {
-    runMotors(left, right, arm);
-  } else if (arm >= 124 && arm <= 126) {
-    // Combine left and right to get a value between approx. -160.00 and 160.00
-    // then place that value into one of the PID gains.
-    double value = (double) ((((left & 0xFF) << 7) | (right & 0x7F)) / 100);
-    if (arm = 124) {
-      Kp = value;
-    } else if (arm = 125) {
-      Ki = value;
-    } else if (arm = 126) {
-      // Client should set Kp and Ki before setting Kd
-      // then update the PID with all three values at once.
-      Kd = value;
-      myPID.SetTunings(Kp, Ki, Kd);
-    }
-  }
+  // Special values:
+  // arm 123 hold current position
+  // arm 124 set angle mode
+  // arm 125 set motor mode (default)
+  // left/right/arm 126 setup - see main loop
+  // left/right/arm 127 idle, off, not spinning
+  moveArm(arm);
+  runWheels(left, right);
 }
 
-void runMotors(int left, int right, int arm) {
-  left = map(left, 0, 254, 1000, 2000);
-  right = map(right, 0, 254, 1000, 2000);
+void moveArm(int arm) {
   arm = map(arm, 0, 254, 1000, 2000);
 
   updateLEDs(arm);
@@ -169,9 +149,15 @@ void runMotors(int left, int right, int arm) {
   myPID.Compute();
   arm = (int) myPID_Output;
 
+  armSrvo.writeMicroseconds(arm);
+}
+
+void runWheels(int left, int right) {
+  left = map(left, 0, 254, 1000, 2000);
+  right = map(right, 0, 254, 1000, 2000);
+
   leftSrvo.writeMicroseconds(left);
   rightSrvo.writeMicroseconds(right);
-  armSrvo.writeMicroseconds(arm);
 }
 
 void idle() {
@@ -203,13 +189,97 @@ void updateLEDs(int arm) {
   }
 }
 
+void blinkBoardLed(int count, int duration) {
+  for (int index = 0; index < count; ++index) {
+    digitalWrite(boardLedPin, HIGH);
+    delay(duration);
+    digitalWrite(boardLedPin, LOW);
+    delay(duration);
+  }
+}
+
+void processSetup() {
+  Serial.println("Setup:");
+
+  // Simple checksum
+  // If needed, consider Fletcher checksum
+  int checksum = 0;
+
+  // Read 3 strings and convert to doubles
+  double values[3];
+  for (int valueIndex = 0; valueIndex < 3; ++valueIndex) {
+    // Read string as # characters followed by characters
+    int strLen = serialRead();
+    char strChars[strLen + 1];
+    for (int strIndex = 0; strIndex < strLen; ++strIndex) {
+      char ch = serialRead();
+      strChars[strIndex] = ch;
+      checksum += ch;
+    }
+    strChars[strLen] = 0;
+    String valueStr = String(strChars);
+    values[valueIndex] = valueStr.toDouble();
+    Serial.print("  ");
+    Serial.println(values[valueIndex]);
+  }
+
+  // Simple sanity check - abort if checksum does not match
+  if ((checksum & 0xFF) != serialRead()) {
+    Serial.print("  Checksum did not match. Expected: ");
+    Serial.println(checksum & 0xFF);
+    blinkBoardLed(3, 500);
+    return;
+  }
+
+  Kp = values[0];
+  Ki = values[1];
+  Kd = values[2];
+  myPID.SetTunings(Kp, Ki, Kd);
+  Serial.println("  PID gains set");
+  blinkBoardLed(5, 50);
+}
+
 /*============================LOCAL TEST=====================================*/
 int serialData[] = {255, 127, 127, 127};
 int serialIndex = 0;
 
+char setupData[][10] = { // max string size + 1 for null terminator
+  {255, 126, 126, 126},
+  "2.0", // Kp
+  "5.17", // Ki
+  "1.3", // Kd
+};
+int setupChecksum = 237;
+int setupIndex = 0;
+int setupCount = 0;
+
+bool serialAvailable() {
+  // return Serial.available() >= 4;
+
+  // Local test
+  return true;
+}
+
 int serialRead() {
-  if (!localTest) {
-    return Serial.read();
+  // return Serial.read();
+
+  // Local test
+  // Simulate client setup command
+  if (setupCount >= 0) {
+    while (setupCount < 4) {
+      if (setupIndex == -1) {
+        ++setupIndex;
+        return String(setupData[setupCount]).length();
+      }
+      unsigned char ch = setupData[setupCount][setupIndex++];
+      if (ch != 0) {
+        return ch;
+      }
+      setupIndex = -1;
+      ++setupCount;
+    }
+    setupCount = -1;
+    return setupChecksum;
   }
 
   // Simulate joystick input from the keyboard
