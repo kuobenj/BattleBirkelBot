@@ -174,15 +174,15 @@ void setArmAngle(int arm) {
   myPID.Compute();
 
   // Debug output
-   Serial.print("  PID arm: ");
-   Serial.print(arm);
-   Serial.print(", setpoint: ");
-   Serial.print(myPID_Setpoint);
-   Serial.print(", input: ");
-   Serial.print(myPID_Input);
-   Serial.print(", output:");
-   Serial.print((int) myPID_Output + 1500);
-   Serial.println("");
+  // Serial.print("  PID arm: ");
+  // Serial.print(arm);
+  // Serial.print(", setpoint: ");
+  // Serial.print(myPID_Setpoint);
+  // Serial.print(", input: ");
+  // Serial.print(myPID_Input);
+  // Serial.print(", output:");
+  // Serial.print((int) myPID_Output + 1500);
+  // Serial.println("");
 
   armSrvo.writeMicroseconds((int) myPID_Output + 1500);
   updateLEDs(arm);
@@ -253,7 +253,7 @@ void blinkBoardLed(int count, int duration) {
 //     <# chars> <armScale>,   <--- string representing value of armScale
 //     <checksum>              <--- sum all chars excluding lengths & 0xFF
 void processSetup() {
-  Serial.println("Setup:");
+  // Serial.println("Setup:");
 
   // Simple checksum
   // If needed, consider Fletcher checksum
@@ -261,13 +261,13 @@ void processSetup() {
 
   char mode = serialRead();
   checksum += mode;
-  Serial.print("  Mode automatic/manual: ");
-  Serial.println(mode);
+  // Serial.print("  Mode automatic/manual: ");
+  // Serial.println(mode);
 
   char proportional = serialRead();
   checksum += proportional;
-  Serial.print("  Proportional on error/measurement: ");
-  Serial.println(proportional);
+  // Serial.print("  Proportional on error/measurement: ");
+  // Serial.println(proportional);
 
   // Read 3 strings and convert to doubles
   double values[4];
@@ -283,14 +283,14 @@ void processSetup() {
     strChars[strLen] = 0;
     String valueStr = String(strChars);
     values[valueIndex] = valueStr.toDouble();
-    Serial.print("  ");
-    Serial.println(values[valueIndex]);
+    // Serial.print("  ");
+    // Serial.println(values[valueIndex]);
   }
 
   // Simple sanity check - abort if checksum does not match
   if ((checksum & 0xFF) != serialRead()) {
-    Serial.print("  Checksum did not match. Expected: ");
-    Serial.println(checksum & 0xFF);
+    // Serial.print("  Checksum did not match. Expected: ");
+    // Serial.println(checksum & 0xFF);
     blinkBoardLed(3, 500);
     return;
   }
@@ -311,91 +311,91 @@ void processSetup() {
     pOn = P_ON_M;
   }
   myPID.SetTunings(Kp, Ki, Kd, pOn);
-  Serial.println("  PID gains set");
+  // Serial.println("  PID gains set");
   blinkBoardLed(5, 50);
 }
 
 /*============================LOCAL TEST=====================================*/
-int serialData[] = {255, 127, 127, 127};
-int serialIndex = 0;
-
-char setupData[][10] = { // max string size + 1 for null terminator
-  {255, 126, 126, 126, 'A', 'M'}, // setup signal + mode + proportional
-  "2.0", // Kp
-  "5.17", // Ki
-  "1.3", // Kd
-  "200.0", // armScale
-};
-int setupChecksum = 107;
-int setupIndex = 0;
-int setupCount = 0;
+//int serialData[] = {255, 127, 127, 127};
+//int serialIndex = 0;
+//
+//char setupData[][10] = { // max string size + 1 for null terminator
+//  {255, 126, 126, 126, 'A', 'M'}, // setup signal + mode + proportional
+//  "2.0", // Kp
+//  "5.17", // Ki
+//  "1.3", // Kd
+//  "200.0", // armScale
+//};
+//int setupChecksum = 107;
+//int setupIndex = 0;
+//int setupCount = 0;
 
 bool serialAvailable() {
-  // return Serial.available() >= 4;
+  return Serial.available() >= 4;
 
-  // Local test
-  return true;
+//  // Local test
+//  return true;
 }
 
 int serialRead() {
-  // return Serial.read();
+  return Serial.read();
 
-  // Local test
-  // Simulate client setup command
-  if (setupCount >= 0) {
-    while (setupCount < 5) {
-      if (setupIndex == -1) {
-        ++setupIndex;
-        return String(setupData[setupCount]).length();
-      }
-      unsigned char ch = setupData[setupCount][setupIndex++];
-      if (ch != 0) {
-        return ch;
-      }
-      setupIndex = -1;
-      ++setupCount;
-    }
-    setupCount = -1;
-    return setupChecksum;
-  }
-
-  // Simulate joystick input from the keyboard
-  if (Serial.available() > 0) {
-    int serialCmd = Serial.read();
-    Serial.println(serialCmd);
-    if (serialCmd == 'f') {        // forward
-      serialData[1] = min(serialData[1] + 10, 254);
-      serialData[2] = min(serialData[2] + 10, 254);
-    } else if (serialCmd == 's') { // stop
-      serialData[1] = 127;
-      serialData[2] = 127;
-    } else if (serialCmd == 'r') { // reverse
-      serialData[1] = max(serialData[1] - 10, 0);
-      serialData[2] = max(serialData[2] - 10, 0);
-    } else if (serialCmd == 'u') { // arm up
-      int arm = min(serialData[3] + 1, 250);
-      if (arm >= 123 && arm <= 126) arm = 127;
-      serialData[3] = arm;
-    } else if (serialCmd == 'd') { // arm down
-      int arm = max(serialData[3] - 1, 0);
-      if (arm >= 123 && arm <= 126) arm = 127;
-      serialData[3] = arm;
-    } else if (serialCmd == '1') { // set arm angle to 1 degree
-      serialData[3] = 1;
-    } else if (serialCmd == 'z') { // set arm zero point
-      serialData[3] = 123;
-    } else if (serialCmd == 'a') { // toggle arm angle/motor mode
-      if (!armAngleMode) {
-        serialData[3] = 124;
-      } else {
-        serialData[3] = 125;
-      }
-    }
-  }
-  int value = serialData[serialIndex];
-  ++serialIndex;
-  if (serialIndex > 3) {
-    serialIndex = 0;
-  }
-  return value;
+//  // Local test
+//  // Simulate client setup command
+//  if (setupCount >= 0) {
+//    while (setupCount < 5) {
+//      if (setupIndex == -1) {
+//        ++setupIndex;
+//        return String(setupData[setupCount]).length();
+//      }
+//      unsigned char ch = setupData[setupCount][setupIndex++];
+//      if (ch != 0) {
+//        return ch;
+//      }
+//      setupIndex = -1;
+//      ++setupCount;
+//    }
+//    setupCount = -1;
+//    return setupChecksum;
+//  }
+//
+//  // Simulate joystick input from the keyboard
+//  if (Serial.available() > 0) {
+//    int serialCmd = Serial.read();
+//    Serial.println(serialCmd);
+//    if (serialCmd == 'f') {        // forward
+//      serialData[1] = min(serialData[1] + 10, 254);
+//      serialData[2] = min(serialData[2] + 10, 254);
+//    } else if (serialCmd == 's') { // stop
+//      serialData[1] = 127;
+//      serialData[2] = 127;
+//    } else if (serialCmd == 'r') { // reverse
+//      serialData[1] = max(serialData[1] - 10, 0);
+//      serialData[2] = max(serialData[2] - 10, 0);
+//    } else if (serialCmd == 'u') { // arm up
+//      int arm = min(serialData[3] + 1, 250);
+//      if (arm >= 123 && arm <= 126) arm = 127;
+//      serialData[3] = arm;
+//    } else if (serialCmd == 'd') { // arm down
+//      int arm = max(serialData[3] - 1, 0);
+//      if (arm >= 123 && arm <= 126) arm = 127;
+//      serialData[3] = arm;
+//    } else if (serialCmd == '1') { // set arm angle to 1 degree
+//      serialData[3] = 1;
+//    } else if (serialCmd == 'z') { // set arm zero point
+//      serialData[3] = 123;
+//    } else if (serialCmd == 'a') { // toggle arm angle/motor mode
+//      if (!armAngleMode) {
+//        serialData[3] = 124;
+//      } else {
+//        serialData[3] = 125;
+//      }
+//    }
+//  }
+//  int value = serialData[serialIndex];
+//  ++serialIndex;
+//  if (serialIndex > 3) {
+//    serialIndex = 0;
+//  }
+//  return value;
 }
