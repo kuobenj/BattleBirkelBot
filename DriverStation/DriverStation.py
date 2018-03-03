@@ -11,23 +11,44 @@ import math
 
 # To check what serial ports are available in Linux, use the bash command: dmesg | grep tty
 # To check what serial ports are available in Windows, use the cmd command: wmic path Win32_SerialPort
-comPort = 'COM3'
+#    OR go to Device Manager > Ports (COM & LPT)
+comPort = 'COM5'
 
-# Ids of buttons used to control arm in auto mode.
-armAutoBtnIds = [4, 5]
+# Set the channel numbers for various controls
+BUTTON_IDS_ARM_AUTO = [4, 5]  # Buttons used to control arm in auto mode
+BUTTON_ID_ENTER_AUTO = 0  # Button used to revert back to auto mode
+BUTTON_ID_RESET_ARM_POS = 7  # Button used to zero the arm position
+BUTTON_ID_SEND_PID_GAINS = 6  # Button used to transmit the PID gains stored in this script
+                              # (different from what the robot might have as its own defaults)
+AXIS_ID_ARM_MANUAL = 2  # Analog triggers for manual arm control
+BUTTON_ID_STOP_PROGRAM = 1
 
-# Id of button used to revert back to auto mode.
-armBtnEnterAutoId = 10
-# Id of button used to zero the arm.
-armBtnZeroId = 11
-
-# Id of axis for analog trigger arm.
-armBtnAnalogTriggerId = 2
-
-# Arm mode.
 class ArmMode(Enum):
     AUTO = 0
     MANUAL = 1
+
+class ArmAutoHeight(Enum):
+    DOWN = 0
+    OVER_BUMPS = 1
+    UP = 2
+
+# Set the preset values for automatic arm control
+ARM_POS_DOWN = 0
+ARM_POS_OVER_BUMPS = 20
+ARM_POS_UP = 80
+
+# Set the reserved values for communicating special signals to the robot.
+# NOTE: Reserved values are selected around 127 ("zero motor power") since those values are rarely
+#       used because it takes more power than that to overcome the motor and gearbox resistance.
+RESERVED_VALUES_MAX = 126  # The highest reserved value
+RESERVED_VALUES_MIN = 123  # The lowest reserved value
+RESERVED_VALUE_ENTER_ARM_AUTO = 124
+RESERVED_VALUE_ENTER_ARM_MANUAL = 125
+RESERVED_VALUE_RESET_ARM_POS = 123
+RESERVED_VALUE_SET_PID_GAINS = 126
+
+# Set the number of times to transmit each mode change message
+RESEND_COUNT_MODE_CHANGE = 3
 
 def main():
 
@@ -44,78 +65,102 @@ def main():
         print("Detected joystick '",joysticks[-1].get_name(),"'")
 
     # Local variables
-    prevdriveMtrCmds = {'left':0, 'right':0}
+    prevDriveMtrCmds = {'left':0, 'right':0}
     prevArmCmd = 0
     prevArmFlags = 0
     prevTimeSent = 0
-    armMode = ArmMode.AUTO
+    prevArmMode = ArmMode.MANUAL
+    currArmMode = ArmMode.MANUAL
+    transmitXTimes = 0
     done = False
 
     try:
         while (done == False):
 
-            pygame.event.pump() # This line is needed to process the gamepad packets
+            pygame.event.pump()  # This line is needed to process the gamepad packets
+
+            ##### WHEEL COMMANDS #####
 
             # Get the raw values for drive translation/rotation using the gamepad.
-            yRaw = joysticks[0].get_axis(1)  # Y-axis translation comes from the left joystick Y axis
-            rRaw = -joysticks[0].get_axis(4) # Rotation comes from the right joystick X axis
-
-
-            # Get the raw values for the arm using the gamepad.
-            armAutoNumBtns = (1 if joysticks[0].get_button(armAutoBtnIds[0]) else 0) + (1 if joysticks[0].get_button(armAutoBtnIds[1]) else 0)
-            armBtnEnterAuto = joysticks[0].get_button(armBtnEnterAutoId)
-            armBtnZero = joysticks[0].get_button(armBtnZeroId)
-            armRawManual = -joysticks[0].get_axis(armBtnAnalogTriggerId) # Raising/lowering the arm comes from the analog triggers
-            armCmdManual = armDrive(armRawManual)
-
-            # Check if a request to switch to AUTO was made.
-            if (armBtnAutoReq):
-                armMode = ArmMode.AUTO
-
-            # If the analog trigger was pressed, switch to manual mode.
-            if (armCmdManual != 0):
-                armMode = ArmMode.MANUAL
-
-            # Arm command: first byte: position. Second byte: flags.
-            # In auto mode: 0 means LOWEST, 1 means LOW, and 2 means HIGH.
-            # Flags:
-            #  0:Mode.             Auto (0); Manual (1).
-            #  1:Zero requested.   No (0); Yes (1).
-
-            armCmd = 0
-            armFlags = 0
-
-            if (armMode == ArmMode.AUTO): 
-                armCmd = armAutoNumBtns
-            else:
-                armCmd = armCmdManual
-                armFlags |= 1 (0000001)
-                if (armBtnZero):
-                    armFlags |= 2 (00000010)
-
+            yRaw = joysticks[0].get_axis(1)   # Y-axis translation comes from the left joystick Y axis
+            rRaw = -joysticks[0].get_axis(4)  # Rotation comes from the right joystick X axis
 
             # Get the drive motor commands for Arcade Drive
             driveMtrCmds = arcadeDrive(yRaw, rRaw)
 
+            # Protect against sending a reserved value
+            if driveMtrCmds['left'] == RESERVED_VALUE_SET_PID_GAINS:
+                driveMtrCmds['left'] = RESERVED_VALUE_SET_PID_GAINS + 1
+            if driveMtrCmds['right'] == RESERVED_VALUE_SET_PID_GAINS:
+                driveMtrCmds['right'] = RESERVED_VALUE_SET_PID_GAINS + 1
+
+            ##########################
+
+            ###### ARM COMMAND #######
+
+            # dGet the raw values for the arm using the gamepad
+            armRawManual = -joysticks[0].get_axis(AXIS_ID_ARM_MANUAL)  # Raising/lowering the arm comes from the analog triggers
+            armAutoNumBtns = (1 if joysticks[0].get_button(BUTTON_IDS_ARM_AUTO[0]) else 0) + \
+                               (1 if joysticks[0].get_button(BUTTON_IDS_ARM_AUTO[1]) else 0)
+            if armAutoNumBtns == 0:
+                armAutoHeight = ArmAutoHeight.DOWN
+            elif armAutoBtns == 1:
+                armAutoHeight = ArmAutoHeight.OVER_BUMPS
+            else:  # armAutoBtns == 2
+                armAutoHeight = ArmAutoHeight.UP
+            armBtnEnterAuto = joysticks[0].get_button(BUTTON_ID_ENTER_AUTO)
+            armBtnZero = joysticks[0].get_button(BUTTON_ID_RESET_ARM_POS)
+            armBtnSendPIDGains = joysticks[0].get_button(BUTTON_ID_SEND_PID_GAINS)
+
+            (rawArmCmd, currArmMode) = armDrive(armRawManual, armAutoHeight, armBtnZero, prevArmMode)
+
+            if transmitXTimes != 0:
+                armCmd = prevArmCmd
+            elif currArmMode == ArmMode.MANUAL and prevArmMode == ArmMode.AUTO:
+                armCmd = RESERVED_VALUE_ENTER_ARM_MANUAL
+                transmitXTimes = RESEND_COUNT_MODE_CHANGE
+            elif currArmMode == ArmMode.AUTO and prevArmMode == ArmMode.MANUAL:
+                armCmd = RESERVED_VALUE_ENTER_ARM_AUTO
+                transmitXTimes = RESEND_COUNT_MODE_CHANGE
+            elif armBtnZero:
+                armCmd = RESERVED_VALUE_RESET_ARM_POS
+                transmitXTimes = RESEND_COUNT_MODE_CHANGE
+            elif armBtnSendPIDGains:
+                armCmd = RESERVED_VALUE_SET_PID_GAINS
+                # To reset the PID gains, all 3 motor commands (left, right, arm) need to be set to the reserved value
+                driveMtrCmds['left'] = RESERVED_VALUE_SET_PID_GAINS
+                driveMtrCmds['right'] = RESERVED_VALUE_SET_PID_GAINS
+            else:
+                if RESERVED_VALUES_MIN <= rawArmCmd and rawArmCmd <= RESERVED_VALUES_MAX:
+                    armCmd = RESERVED_VALUES_MAX + 1
+                else:
+                    armCmd = rawArmCmd
+            # armCmd = 127
+
+            ##########################
+
             # Only send if the commands changed or if 200ms have elapsed
-            if (prevdriveMtrCmds['left'] != driveMtrCmds['left'] or
-                prevdriveMtrCmds['right'] != driveMtrCmds['right'] or
+            if joysticks[0].get_button(BUTTON_ID_STOP_PROGRAM):
+                cleanup()
+                done = True
+            elif (prevDriveMtrCmds['left'] != driveMtrCmds['left'] or
+                prevDriveMtrCmds['right'] != driveMtrCmds['right'] or
                 prevArmCmd != armCmd or
-                prevArmFlags != armFlags or
-                time.time()*1000 > prevTimeSent + 200):
+                time.time()*1000 > prevTimeSent + 50):
 
                 print("Sending... L: ", driveMtrCmds['left'], ", R: ", driveMtrCmds['right'], ", A: ", armCmd)
                 ser.write(chr(255))  # Start byte
                 ser.write(chr(driveMtrCmds['left']))
                 ser.write(chr(driveMtrCmds['right']))
                 ser.write(chr(armCmd))
-                ser.write(chr(armFlags))
 
-                prevdriveMtrCmds = driveMtrCmds
+                prevDriveMtrCmds = driveMtrCmds
                 prevArmCmd = armCmd
-                prevArmFlag = armFlag
                 prevTimeSent = time.time()*1000
-                time.sleep(.05)
+                if transmitXTimes != 0:
+                    transmitXTimes -= 1
+                time.sleep(0.01)
+
     except KeyboardInterrupt:
         cleanup()
 
@@ -215,10 +260,38 @@ def arcadeDrive(yIn, rIn):
 
 ############################################################
 ## @brief  Function to compute the arm drive command
-## @param  aIn - raw joystick input from -1.0 to 1.0
+## @param  manualIn - raw analog trigger input from -1.0 to 1.0
+## @param  autoHeight - the desired height (enum) of the arm for automatic control
+## @param  enterAuto - whether to enter (or re-enter) automatic control
+## @param  prevMode - mode of the arm from the previous iteration
+## @return (the arm command, the arm mode)
+############################################################
+def armDrive(manualIn, autoHeight, enterAuto, prevMode):
+
+    currMode = prevMode
+
+    manualCmd = manualArmDrive(manualIn)
+    
+    if manualCmd != 0:
+        currMode = ArmMode.MANUAL
+        armCmd = manualCmd
+    elif enterAuto or currMode == ArmMode.AUTO:
+        currMode = ArmMode.AUTO
+        if autoHeight == ArmAutoHeight.DOWN:
+            armCmd = ARM_POS_DOWN
+        elif autoHeight == ArmAutoHeight.OVER_BUMPS:
+            armCmd = ARM_POS_OVER_BUMPS
+        else:  # autoHeight == ArmAutoHeight.UP
+            armCmd = ARM_POS_UP
+
+    return (armCmd, currMode)
+
+############################################################
+## @brief  Function to compute the manual arm drive command
+## @param  aIn - raw input from -1.0 to 1.0
 ## @return the arm command
 ############################################################
-def armDrive(aIn):
+def manualArmDrive(aIn):
 
     # Set output command range constants
     zeroCommand = int(127)  # the default value that corresponds to no motor power
@@ -277,7 +350,6 @@ def cleanup():
     print("Cleaning up and exiting")
     ser = serial.Serial(comPort, 57600, timeout=1)
     ser.write(b'\xFF')
-    ser.write(b'\x00')
     ser.write(b'\x00')
     ser.write(b'\x00')
     ser.write(b'\x00')
