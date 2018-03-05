@@ -149,15 +149,12 @@ def main():
                                            armAutoHeight, armBtnEnterAuto, prevArmMode)
 
             if transmitXTimes > 0:
-                print("retransmitting... count = ", transmitXTimes)
                 armCmd = prevArmCmd
             elif currArmMode == ArmMode.MANUAL and prevArmMode == ArmMode.AUTO:
                 armCmd = RESERVED_VALUE_ENTER_ARM_MANUAL
-                print("switching to manual mode")
                 transmitXTimes = RESEND_COUNT_MODE_CHANGE
             elif currArmMode == ArmMode.AUTO and prevArmMode == ArmMode.MANUAL:
                 armCmd = RESERVED_VALUE_ENTER_ARM_AUTO
-                print("switching to auto mode")
                 transmitXTimes = RESEND_COUNT_MODE_CHANGE
             elif armBtnZero:
                 armCmd = RESERVED_VALUE_RESET_ARM_POS
@@ -174,10 +171,6 @@ def main():
                     armCmd = rawArmCmd
 
             prevArmMode = currArmMode
-            
-            # armCmd = manualArmDrive(armRawManual)
-            # if RESERVED_VALUES_MIN <= armCmd and armCmd <= RESERVED_VALUES_MAX:
-            #     armCmd = RESERVED_VALUES_MAX + 1
 
             ##########################
 
