@@ -1,4 +1,6 @@
 #include <Servo.h>
+//#define ENCODER_DO_NOT_USE_INTERRUPTS
+#define ENCODER_OPTIMIZE_INTERRUPTS
 #include <Encoder.h>
 #include <PID_v1.h>
 
@@ -14,10 +16,20 @@ const unsigned char armPin = 9;
 
 //Lights
 const unsigned char boardLedPin = 13;
-  //LED Strip
-const unsigned char ledPinBlue = 14;
-const unsigned char ledPinRed = 15;
-const unsigned char ledPinGreen = 16;
+//LED Strip
+const unsigned char ledPinBlue = 16;
+const unsigned char ledPinRed = 14;
+const unsigned char ledPinGreen = 15;
+enum LEDColor {
+  OFF,
+  RED,
+  GREEN,
+  BLUE,
+  YELLOW,
+  PURPLE,
+  BLUEGREEN,
+  WHITE
+};
 
 //Encoder Pins
 const unsigned char inttEncPinA = 2;
@@ -39,11 +51,11 @@ bool armAngleMode = false;
 
 // The encoder value at which the arm is considered to be
 // all the way down at "zero" angle.
-int armZeroPoint = 0;
+int32_t armZeroPoint = 0;
 
 // The multiplier used to convert the arm angle (0 to 250)
 // to the desired encoder value.
-double armScale = 100;
+double armScale = 40;
 
 //Encoders
 /* If the Encoder API is not installed in your Arduino Environement:
@@ -54,11 +66,15 @@ double armScale = 100;
 Encoder inttEnc(inttEncPinA, inttEncPinB);
 // Encoder pollEnc(pollEncPinA, pollEncPinB);
 
+//Interrupt limiting
+int interruptsDisabledLoopCount = 0;
+int numLoopsBetweenActivatingInterrupts = 1;
+
 //PID object for arm
 //TODO: SET GAINS
 double myPID_Setpoint, myPID_Input, myPID_Output;
-double Kp=2, Ki=5, Kd=1; //Gains
-PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, P_ON_M, DIRECT);
+double Kp=0.1, Ki=0, Kd=0; //Gains
+PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, P_ON_E, DIRECT);
 
 //var for checking if comms are lost
 unsigned long lastTimeRX = 0;
@@ -95,7 +111,7 @@ void setup() {
   // Set Up Arm PID
   //turn the PID on
   myPID_Setpoint = 0.0; //TODO: Change this to meaningful value
-  myPID.SetMode(AUTOMATIC);
+  myPID.SetMode(MANUAL);
   myPID.SetOutputLimits(-500, 500);
 
   // Give a few blinks to show that the code is up and running
@@ -104,6 +120,9 @@ void setup() {
 
 /*=================================LOOP=======================================*/
 void loop() {
+  // Poll the encoder
+  //inttEnc.read();
+
   if (serialAvailable()) {
     // Look for the start byte (255, or 0xFF)
     if (serialRead() == 255) {
@@ -127,17 +146,17 @@ void loop() {
 /*============================CUSTOM FUNC=====================================*/
 void processCmd(int left, int right, int arm) {
   // Debug output
-  // Serial.print("L: ");
-  // Serial.print(left);
-  // Serial.print(", R:");
-  // Serial.print(right);
-  // Serial.print(", A:");
-  // Serial.print(arm);
-  // Serial.print(", Enc:");
-  // Serial.print(inttEnc.read());
-  // Serial.print(", Count:");
-  // Serial.print(++loopCount);
-  // Serial.println("");
+//  Serial.print("L: ");
+//  Serial.print(left);
+//  Serial.print(", R:");
+//  Serial.print(right);
+//  Serial.print(", A:");
+//  Serial.print(arm);
+//  Serial.print(", Enc:");
+//  Serial.print(inttEnc.read());
+//  Serial.print(", Count:");
+//  Serial.print(++loopCount);
+//  Serial.println("");
 
   // Indicate that we have signal by illuminating the on-board LED
   digitalWrite(boardLedPin, HIGH);
@@ -146,10 +165,13 @@ void processCmd(int left, int right, int arm) {
   // left/right/arm all == 126 is setup cmd - see main loop
   if (arm == 123) {        // reset current arm encoder value as zero point
     armZeroPoint = inttEnc.read();
+    setLEDColor(PURPLE);
   } else if (arm == 124) { // set arm in angle mode
     armAngleMode = true;
+    myPID.SetMode(AUTOMATIC);
   } else if (arm == 125) { // set arm in motor mode (default)
     armAngleMode = false;
+    myPID.SetMode(MANUAL);
   } else if (armAngleMode) {
     setArmAngle(arm);
   } else {
@@ -174,24 +196,36 @@ void setArmAngle(int arm) {
   myPID.Compute();
 
   // Debug output
-  // Serial.print("  PID arm: ");
-  // Serial.print(arm);
-  // Serial.print(", setpoint: ");
-  // Serial.print(myPID_Setpoint);
-  // Serial.print(", input: ");
-  // Serial.print(myPID_Input);
-  // Serial.print(", output:");
-  // Serial.print((int) myPID_Output + 1500);
-  // Serial.println("");
+//  Serial.print("  PID arm: ");
+//  Serial.print(arm);
+//  Serial.print(", setpoint: ");
+//  Serial.print(myPID_Setpoint);
+//  Serial.print(", input: ");
+//  Serial.print(myPID_Input);
+//  Serial.print(", output:");
+//  Serial.print((int) myPID_Output + 1500);
+//  Serial.println("");
 
-  armSrvo.writeMicroseconds((int) myPID_Output + 1500);
-  updateLEDs(arm);
+  // Cap the PID command at the endpoints of the command range
+  double armMicroseconds = myPID_Output + 1500;
+  if (armMicroseconds > 2000) armMicroseconds = 2000;
+  if (armMicroseconds < 1000) armMicroseconds = 1000;
+
+  armSrvo.writeMicroseconds((int) armMicroseconds);
+  setLEDColor(YELLOW);
 }
 
 void moveArm(int arm) {
   arm = map(arm, 0, 254, 1000, 2000);
   armSrvo.writeMicroseconds(arm);
-  updateLEDs(arm);
+
+  if (arm > 1505) {
+    setLEDColor(BLUE);
+  } else if(arm < 1495) {
+    setLEDColor(GREEN);
+  } else {
+    setLEDColor(WHITE);
+  }
 }
 
 void runWheels(int left, int right) {
@@ -210,24 +244,60 @@ void idle() {
 
   // Indicate that we have lost comms by turning off the on-board LED
   digitalWrite(boardLedPin, LOW);
-  digitalWrite(ledPinBlue, LOW);
-  digitalWrite(ledPinRed, HIGH);
-  digitalWrite(ledPinGreen, LOW);
+  setLEDColor(RED);
 }
 
-void updateLEDs(int arm) {
-  if (arm > 1505) {
-    digitalWrite(ledPinBlue, HIGH);
-    digitalWrite(ledPinRed, LOW);
-    digitalWrite(ledPinGreen, LOW);
-  } else if(arm < 1495) {
-    digitalWrite(ledPinBlue, LOW);
-    digitalWrite(ledPinRed, LOW);
-    digitalWrite(ledPinGreen, HIGH);
-  } else {
-    digitalWrite(ledPinBlue, HIGH);
-    digitalWrite(ledPinRed, HIGH);
-    digitalWrite(ledPinGreen, HIGH);
+void setLEDColor(LEDColor color) {
+  switch (color) {
+    case OFF:
+      digitalWrite(ledPinRed, LOW);
+      digitalWrite(ledPinGreen, LOW);
+      digitalWrite(ledPinBlue, LOW);
+      break;
+    case RED:
+      digitalWrite(ledPinRed, HIGH);
+      digitalWrite(ledPinGreen, LOW);
+      digitalWrite(ledPinBlue, LOW);
+      break;
+    case GREEN:
+      digitalWrite(ledPinRed, LOW);
+      digitalWrite(ledPinGreen, HIGH);
+      digitalWrite(ledPinBlue, LOW);
+      break;
+    case BLUE:
+      digitalWrite(ledPinRed, LOW);
+      digitalWrite(ledPinGreen, LOW);
+      digitalWrite(ledPinBlue, HIGH);
+      break;
+    case YELLOW:
+      digitalWrite(ledPinRed, HIGH);
+      digitalWrite(ledPinGreen, HIGH);
+      digitalWrite(ledPinBlue, LOW);
+      break;
+    case PURPLE:
+      digitalWrite(ledPinRed, HIGH);
+      digitalWrite(ledPinGreen, LOW);
+      digitalWrite(ledPinBlue, HIGH);
+      break;
+    case BLUEGREEN:
+      digitalWrite(ledPinRed, LOW);
+      digitalWrite(ledPinGreen, HIGH);
+      digitalWrite(ledPinBlue, HIGH);
+      break;
+    case WHITE:
+      digitalWrite(ledPinRed, HIGH);
+      digitalWrite(ledPinGreen, HIGH);
+      digitalWrite(ledPinBlue, HIGH);
+      break;
+  }
+}
+
+void blinkLED(int count, int duration, LEDColor color) {
+  for (int index = 0; index < count; ++index) {
+    setLEDColor(color);
+    delay(duration);
+    setLEDColor(WHITE);
+    delay(duration);
   }
 }
 
@@ -243,8 +313,6 @@ void blinkBoardLed(int count, int duration) {
 // Specialized command for setting up the PID controller.
 // Command format:
 //   255, 126, 126, 126,
-//     <Mode char>,            <--- either "A" for automatic
-//                                      or "M" for manual
 //     <Proportional char>,    <--- either "E" for proportional on error
 //                                      or "M" for proportional on measurement
 //     <# chars> <Kp>,         <--- string representing value of Kp
@@ -253,23 +321,18 @@ void blinkBoardLed(int count, int duration) {
 //     <# chars> <armScale>,   <--- string representing value of armScale
 //     <checksum>              <--- sum all chars excluding lengths & 0xFF
 void processSetup() {
-  // Serial.println("Setup:");
+//  Serial.println("Setup:");
 
   // Simple checksum
   // If needed, consider Fletcher checksum
   int checksum = 0;
-
-  char mode = serialRead();
-  checksum += mode;
-  // Serial.print("  Mode automatic/manual: ");
-  // Serial.println(mode);
 
   char proportional = serialRead();
   checksum += proportional;
   // Serial.print("  Proportional on error/measurement: ");
   // Serial.println(proportional);
 
-  // Read 3 strings and convert to doubles
+  // Read 4 strings and convert to doubles
   double values[4];
   for (int valueIndex = 0; valueIndex < 4; ++valueIndex) {
     // Read string as # characters followed by characters
@@ -283,23 +346,19 @@ void processSetup() {
     strChars[strLen] = 0;
     String valueStr = String(strChars);
     values[valueIndex] = valueStr.toDouble();
-    // Serial.print("  ");
-    // Serial.println(values[valueIndex]);
+//     Serial.print("  ");
+//     Serial.println(values[valueIndex]);
   }
 
   // Simple sanity check - abort if checksum does not match
   if ((checksum & 0xFF) != serialRead()) {
-    // Serial.print("  Checksum did not match. Expected: ");
-    // Serial.println(checksum & 0xFF);
-    blinkBoardLed(3, 500);
+//    Serial.print("  Checksum did not match. Expected: ");
+//    Serial.println(checksum & 0xFF);
+    // blinkBoardLed(3, 500);
+    blinkLED(3, 250, RED);
     return;
   }
 
-  if (mode == 'M') {
-    myPID.SetMode(MANUAL);
-  } else {
-    myPID.SetMode(AUTOMATIC);
-  }
   Kp = values[0];
   Ki = values[1];
   Kd = values[2];
@@ -311,8 +370,10 @@ void processSetup() {
     pOn = P_ON_M;
   }
   myPID.SetTunings(Kp, Ki, Kd, pOn);
-  // Serial.println("  PID gains set");
-  blinkBoardLed(5, 50);
+//  Serial.println("  PID gains set");
+  // blinkBoardLed(5, 50);
+  blinkLED(5, 50, PURPLE);
+  setLEDColor(PURPLE);
 }
 
 /*============================LOCAL TEST=====================================*/
@@ -320,20 +381,20 @@ void processSetup() {
 //int serialIndex = 0;
 //
 //char setupData[][10] = { // max string size + 1 for null terminator
-//  {255, 126, 126, 126, 'A', 'M'}, // setup signal + mode + proportional
-//  "2.0", // Kp
-//  "5.17", // Ki
-//  "1.3", // Kd
-//  "200.0", // armScale
+//  {(char) 255, 126, 126, 126, 'E'}, // setup signal + proportional
+//  "0.1", // Kp
+//  "0", // Ki
+//  "0", // Kd
+//  "40", // armScale
 //};
-//int setupChecksum = 107;
+//int setupChecksum = 152;
 //int setupIndex = 0;
-//int setupCount = 0;
+//int setupCount = -1;
 
 bool serialAvailable() {
   return Serial.available() >= 4;
 
-//  // Local test
+  // Local test
 //  return true;
 }
 
@@ -363,28 +424,64 @@ int serialRead() {
 //  if (Serial.available() > 0) {
 //    int serialCmd = Serial.read();
 //    Serial.println(serialCmd);
-//    if (serialCmd == 'f') {        // forward
+//
+//    if (serialCmd == 'c') {               // send setup message
+//      setupCount = 0;
+//    
+//    } else if (serialCmd == 'f') {        // forward
 //      serialData[1] = min(serialData[1] + 10, 254);
 //      serialData[2] = min(serialData[2] + 10, 254);
+//    } else if (serialCmd == 'g') {        // forward small
+//      serialData[1] = min(serialData[1] + 2, 254);
+//      serialData[2] = min(serialData[2] + 2, 254);
+//    } else if (serialCmd == 'h') {        // forward full
+//      serialData[1] = 254;
+//      serialData[2] = 254;
 //    } else if (serialCmd == 's') { // stop
 //      serialData[1] = 127;
 //      serialData[2] = 127;
 //    } else if (serialCmd == 'r') { // reverse
 //      serialData[1] = max(serialData[1] - 10, 0);
 //      serialData[2] = max(serialData[2] - 10, 0);
-//    } else if (serialCmd == 'u') { // arm up
+//    } else if (serialCmd == 't') { // reverse small
+//      serialData[1] = max(serialData[1] - 2, 0);
+//      serialData[2] = max(serialData[2] - 2, 0);
+//    } else if (serialCmd == 'y') { // reverse full
+//      serialData[1] = 0;
+//      serialData[2] = 0;
+//      
+//    } else if (serialCmd == 'u') {        // up
+//      serialData[3] = min(serialData[3] + 10, 254);
+//    } else if (serialCmd == 'i') {        // up small
+//      serialData[3] = min(serialData[3] + 2, 254);
+//    } else if (serialCmd == 'o') {        // up full
+//      serialData[3] = 254;
+//    } else if (serialCmd == 'm') { // stop
+//      serialData[3] = 127;
+//    } else if (serialCmd == 'j') { // down
+//      serialData[3] = max(serialData[3] - 10, 0);
+//    } else if (serialCmd == 'k') { // down small
+//      serialData[3] = max(serialData[3] - 2, 0);
+//    } else if (serialCmd == 'l') { // down full
+//      serialData[3] = 0;
+//      
+//    } else if (serialCmd == 'q') { // arm up
 //      int arm = min(serialData[3] + 1, 250);
 //      if (arm >= 123 && arm <= 126) arm = 127;
 //      serialData[3] = arm;
-//    } else if (serialCmd == 'd') { // arm down
+//    } else if (serialCmd == 'a') { // arm down
 //      int arm = max(serialData[3] - 1, 0);
 //      if (arm >= 123 && arm <= 126) arm = 127;
 //      serialData[3] = arm;
 //    } else if (serialCmd == '1') { // set arm angle to 1 degree
 //      serialData[3] = 1;
+//    } else if (serialCmd == '5') { // set arm angle to 124 degree
+//      serialData[3] = 127;
+//    } else if (serialCmd == '9') { // set arm angle to 250 degree
+//      serialData[3] = 254;
 //    } else if (serialCmd == 'z') { // set arm zero point
 //      serialData[3] = 123;
-//    } else if (serialCmd == 'a') { // toggle arm angle/motor mode
+//    } else if (serialCmd == 'x') { // toggle arm angle/motor mode
 //      if (!armAngleMode) {
 //        serialData[3] = 124;
 //      } else {
