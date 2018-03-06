@@ -123,7 +123,7 @@ void loop() {
   // Poll the encoder
   //inttEnc.read();
 
-  if (serialAvailable()) {
+  if (serialAvailable(4)) {
     // Look for the start byte (255, or 0xFF)
     if (serialRead() == 255) {
       lastTimeRX = millis();
@@ -327,6 +327,7 @@ void processSetup() {
   // If needed, consider Fletcher checksum
   int checksum = 0;
 
+  waitSerialAvailable(1);
   char proportional = serialRead();
   checksum += proportional;
   // Serial.print("  Proportional on error/measurement: ");
@@ -336,8 +337,10 @@ void processSetup() {
   double values[4];
   for (int valueIndex = 0; valueIndex < 4; ++valueIndex) {
     // Read string as # characters followed by characters
+    waitSerialAvailable(1);
     int strLen = serialRead();
     char strChars[strLen + 1];
+    waitSerialAvailable(strLen);
     for (int strIndex = 0; strIndex < strLen; ++strIndex) {
       char ch = serialRead();
       strChars[strIndex] = ch;
@@ -351,6 +354,7 @@ void processSetup() {
   }
 
   // Simple sanity check - abort if checksum does not match
+  waitSerialAvailable(1);
   if ((checksum & 0xFF) != serialRead()) {
 //    Serial.print("  Checksum did not match. Expected: ");
 //    Serial.println(checksum & 0xFF);
@@ -391,8 +395,15 @@ void processSetup() {
 //int setupIndex = 0;
 //int setupCount = -1;
 
-bool serialAvailable() {
-  return Serial.available() >= 4;
+// Block the main loop until the specified number of bytes is available
+void waitSerialAvailable(int count) {
+  while (!serialAvailable(count)) {
+    delay(1);
+  }
+}
+
+bool serialAvailable(int count) {
+  return Serial.available() >= count;
 
   // Local test
 //  return true;
