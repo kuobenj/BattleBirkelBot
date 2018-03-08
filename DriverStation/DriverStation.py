@@ -23,49 +23,41 @@ comPort = 'COM5'
 # Arm:
 #  In manual mode...
 #    Right trigger -- arm up (analog control)
-#    Right bumper -- arm up (fixed power)
 #    Left trigger -- arm down (analog control)
-#    Left bumper -- arm down (fixed power)
-#    A button -- enter auto mode
 #    Start button -- consider the current position the new "down" position for auto mode
+#    Press either bumper -- enter auto mode
 #  In auto mode...
 #    Nothing -- arm goes to "down" position
 #    Hold one bumper (either one) -- arm goes to "over bumps" position
 #    Hold both bumpers -- arm goes to "up" position
 #    Press either trigger -- kick out to manual mode
+#    A button -- kick out to manual mode
 #######################
 
 # Set the channel numbers for various controls
 BUTTON_IDS_ARM_AUTO = [4, 5]  # Buttons used to control arm in auto mode
-BUTTON_ID_ENTER_AUTO = 0  # Button used to revert back to auto mode
+BUTTON_ID_EXIT_AUTO = 0  # Button used to forcefully exit auto mode
 BUTTON_ID_RESET_ARM_POS = 7  # Button used to zero the arm position
 BUTTON_ID_SEND_PID_GAINS = 6  # Button used to transmit the PID gains stored in this script
                               # (different from what the robot might have as its own defaults)
 AXIS_ID_ARM_MANUAL = 2  # Analog triggers for manual arm control
-BUTTON_ID_ARM_MANUAL_UP = 5  # Button used to move the arm up in manual mode
-BUTTON_ID_ARM_MANUAL_DOWN = 4  # Button used to move the arm down in manual mode
 BUTTON_ID_STOP_PROGRAM = 1
 
 class ArmMode(Enum):
     AUTO = 0
     MANUAL = 1
 
-class ArmAutoHeight(Enum):
-    DOWN = 0
-    OVER_BUMPS = 1
-    UP = 2
-
 # Set the preset values for automatic arm control
 ARM_POS_DOWN = 0
-ARM_POS_OVER_BUMPS = 20
+ARM_POS_OVER_BUMPS = 10
 ARM_POS_UP = 80
 
 # Set the PID gains (only transmitted when hitting the "send PID gains" button)
 PID_ERROR_OR_MEASUREMENT = 'E'  # 'E' for error, 'M' for measurement
-PID_P_GAIN = "0.1"  # Must be a double in string format
-PID_I_GAIN = "0"  # Must be a double in string format
-PID_D_GAIN = "0"  # Must be a double in string format
-ARM_SCALE_FACTOR = "40"  # Must be a double in string format
+PID_P_GAIN = "0.43"  # Must be a double in string format
+PID_I_GAIN = "0.0001"  # Must be a double in string format
+PID_D_GAIN = "0.05"  # Must be a double in string format
+ARM_SCALE_FACTOR = "20"  # Must be a double in string format
 
 # Set the reserved values for communicating special signals to the robot.
 # NOTE: Reserved values are selected around 127 ("zero motor power") since those values are rarely
@@ -96,12 +88,12 @@ def main():
 
     # Local variables
     prevDriveMtrCmds = {'left':0, 'right':0}
-    prevArmCmd = 0
+    prevArmCmd = RESERVED_VALUE_ENTER_ARM_MANUAL
     prevArmFlags = 0
     prevTimeSent = 0
     prevArmMode = ArmMode.MANUAL
     currArmMode = ArmMode.MANUAL
-    transmitXTimes = 0
+    transmitXTimes = RESEND_COUNT_MODE_CHANGE
     done = False
     loopCounter = 0
 
@@ -118,6 +110,7 @@ def main():
 
             # Get the drive motor commands for Arcade Drive
             driveMtrCmds = arcadeDrive(yRaw, rRaw)
+            driveMtrCmds['left'] = 255 - driveMtrCmds['left']
 
             # Protect against sending a reserved value
             if driveMtrCmds['left'] == RESERVED_VALUE_SET_PID_GAINS:
@@ -130,23 +123,14 @@ def main():
             ###### ARM COMMAND #######
 
             # Get the raw values for the arm using the gamepad
-            armRawManual = -joysticks[0].get_axis(AXIS_ID_ARM_MANUAL)
-            armManualUpBtn = joysticks[0].get_button(BUTTON_ID_ARM_MANUAL_UP)
-            armManualDownBtn = joysticks[0].get_button(BUTTON_ID_ARM_MANUAL_DOWN)
+            armRawManual = joysticks[0].get_axis(AXIS_ID_ARM_MANUAL)
             armAutoNumBtns = (1 if joysticks[0].get_button(BUTTON_IDS_ARM_AUTO[0]) else 0) + \
                                (1 if joysticks[0].get_button(BUTTON_IDS_ARM_AUTO[1]) else 0)
-            if armAutoNumBtns == 0:
-                armAutoHeight = ArmAutoHeight.DOWN
-            elif armAutoNumBtns == 1:
-                armAutoHeight = ArmAutoHeight.OVER_BUMPS
-            else:  # armAutoNumBtns == 2
-                armAutoHeight = ArmAutoHeight.UP
-            armBtnEnterAuto = joysticks[0].get_button(BUTTON_ID_ENTER_AUTO)
+            armBtnExitAuto = joysticks[0].get_button(BUTTON_ID_EXIT_AUTO)
             armBtnZero = joysticks[0].get_button(BUTTON_ID_RESET_ARM_POS)
             armBtnSendPIDGains = joysticks[0].get_button(BUTTON_ID_SEND_PID_GAINS)
 
-            (rawArmCmd, currArmMode) = armDrive(armRawManual, armManualUpBtn, armManualDownBtn, \
-                                           armAutoHeight, armBtnEnterAuto, prevArmMode)
+            (rawArmCmd, currArmMode) = armDrive(armRawManual, armAutoNumBtns, armBtnExitAuto, prevArmMode)
 
             if transmitXTimes > 0:
                 armCmd = prevArmCmd
@@ -328,36 +312,27 @@ def arcadeDrive(yIn, rIn):
 ############################################################
 ## @brief  Function to compute the arm drive command
 ## @param  manualIn - raw analog trigger input from -1.0 to 1.0
-## @param  manualUp - whether the manual up button is pressed
-## @param  manualIn - whether the manual down button is pressed
-## @param  autoHeight - the desired height (enum) of the arm for automatic control
-## @param  enterAuto - whether to enter (or re-enter) automatic control
+## @param  autoNumBtns - the total number of buttons being pressed for automatic arm control
+## @param  exitAuto - whether to forcefully exit automatic control
 ## @param  prevMode - mode of the arm from the previous iteration
 ## @return (the arm command, the arm mode)
 ############################################################
-def armDrive(manualIn, manualUp, manualDown, autoHeight, enterAuto, prevMode):
+def armDrive(manualIn, autoNumBtns, exitAuto, prevMode):
 
-    ZERO_COMMAND = 127        # the default value that corresponds to no motor power
-    MANUAL_UP_BTN_CMD = 200   # the command when the manual up button is pressed
-    MANUAL_DOWN_BTN_CMD = 50  # the command when the manual down button is pressed
+    ZERO_COMMAND = 127  # the default value that corresponds to no motor power
 
     manualCmd = manualArmDrive(manualIn)
     
-    if manualCmd != ZERO_COMMAND or (prevMode == ArmMode.MANUAL and not enterAuto):
-        currMode = ArmMode.MANUAL
-        if manualUp:
-            armCmd = MANUAL_UP_BTN_CMD
-        elif manualDown:
-            armCmd = MANUAL_DOWN_BTN_CMD
-        else: 
-            armCmd = manualCmd
-    else:  # manualCmd == 0 and (prevMode == ArmMode.AUTO or enterAuto)
+    if manualCmd != ZERO_COMMAND or (prevMode == ArmMode.MANUAL and autoNumBtns == 0) or exitAuto:
+        currMode = ArmMode.MANUAL 
+        armCmd = manualCmd
+    else:  # manualCmd == 0 and (prevMode == ArmMode.AUTO or autoNumBtns > 0) and !exitAuto
         currMode = ArmMode.AUTO
-        if autoHeight == ArmAutoHeight.DOWN:
+        if autoNumBtns == 0:
             armCmd = ARM_POS_DOWN
-        elif autoHeight == ArmAutoHeight.OVER_BUMPS:
+        elif autoNumBtns == 1:
             armCmd = ARM_POS_OVER_BUMPS
-        else:  # autoHeight == ArmAutoHeight.UP
+        else:  # autoNumBtns == 2
             armCmd = ARM_POS_UP
 
     return (armCmd, currMode)
