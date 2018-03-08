@@ -13,6 +13,7 @@ import math
 # To check what serial ports are available in Windows, use the cmd command: wmic path Win32_SerialPort
 #    OR go to Device Manager > Ports (COM & LPT)
 comPort = 'COM5'
+ser = serial.Serial(comPort, 57600, timeout=1)
 
 ### CONTROL SCHEME ###
 # Drive:
@@ -74,9 +75,7 @@ RESEND_COUNT_MODE_CHANGE = 3
 
 def main():
 
-    # Initialize the serial port
-    ser = serial.Serial(comPort, 57600, timeout=1)
-    #os.environ["SDL_VIDEODRIVER"] = "dummy"
+    global ser
 
     # Initialize the gamepad
     pygame.init()
@@ -101,6 +100,10 @@ def main():
         while (done == False):
 
             pygame.event.pump()  # This line is needed to process the gamepad packets
+
+            if joystickWatchdog(joysticks[0]):
+                sendNeutralCommand()
+                continue
 
             ##### WHEEL COMMANDS #####
 
@@ -392,25 +395,74 @@ def manualArmDrive(aIn):
 
     return aCmd
 
+############################################################
+## @brief Run a watchdog check on the joystick
+## @param joystick - the pygame joystick object
+## @return true if the watchdog thinks the joystick died
+############################################################
+lastChangeDetected = time.time()*1000
+prevAxes = []
+prevBtns = []
+
+def joystickWatchdog(joystick):
+    global lastChangeDetected
+    global prevAxes
+    global prevBtns
+
+    if not prevAxes:
+        for i in range(0, joystick.get_numaxes()):
+            prevAxes.append(joystick.get_axis(i))
+    else:
+        for i in range(0, joystick.get_numaxes()):
+            if prevAxes[i] != joystick.get_axis(i):
+                lastChangeDetected = time.time()*1000
+            prevAxes[i] = joystick.get_axis(i)
+
+    if not prevBtns:
+        for i in range(0, joystick.get_numbuttons()):
+            prevBtns.append(joystick.get_button(i))
+    else:
+        for i in range(0, joystick.get_numbuttons()):
+            if prevBtns[i] != joystick.get_button(i):
+                lastChangeDetected = time.time()*1000
+            prevBtns[i] = joystick.get_button(i)
+
+    # If no change happens in 7000ms, consider the joystick dead
+    if time.time()*1000 > lastChangeDetected + 7000:
+        return True
+    else:
+        return False
+
+
+############################################################
+## @brief Zero all the commands to the robot
+############################################################
+def sendNeutralCommand():
+
+    global ser
+
+    for i in range (0, 3):
+        ser.write(chr(255))
+        ser.write(chr(127))
+        ser.write(chr(127))
+        ser.write(chr(RESERVED_VALUE_ENTER_ARM_MANUAL))
+
+    for i in range (0, 3):
+        ser.write(chr(255))
+        ser.write(chr(127))
+        ser.write(chr(127))
+        ser.write(chr(127))
+
 
 ############################################################
 ## @brief Zero all the commands to the robot and exit
 ############################################################
 def cleanup():
 
-    print("Cleaning up and exiting")
-    ser = serial.Serial(comPort, 57600, timeout=1)
-    ser.write(b'\xFF')
-    ser.write(b'\x00')
-    ser.write(b'\x00')
-    ser.write(b'\x00')
+    global ser
 
-    # ser.write(startByte.to_bytes(1, byteorder='big'))
-    # ser.write(b'\x00')
-    # ser.write(b'\x00')
-    # ser.write(b'\x00')
-    # ser.write(b'\x00')
-    # ser.write(b'\x00\x00')
+    print("Cleaning up and exiting")
+    sendNeutralCommand()
     ser.close()
     pygame.quit()
     exit()
