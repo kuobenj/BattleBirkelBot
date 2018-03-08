@@ -55,7 +55,7 @@ int32_t armZeroPoint = 0;
 
 // The multiplier used to convert the arm angle (0 to 250)
 // to the desired encoder value.
-double armScale = 40;
+double armScale = 20;
 
 //Encoders
 /* If the Encoder API is not installed in your Arduino Environement:
@@ -63,7 +63,7 @@ double armScale = 40;
   - Search 'Encoder'
   - Install 'Encoder by Paul Stoffregen' (This project uses version 1.4.1)
 */
-Encoder inttEnc(inttEncPinA, inttEncPinB);
+Encoder inttEnc(inttEncPinB, inttEncPinA);
 // Encoder pollEnc(pollEncPinA, pollEncPinB);
 
 //Interrupt limiting
@@ -73,11 +73,14 @@ int numLoopsBetweenActivatingInterrupts = 1;
 //PID object for arm
 //TODO: SET GAINS
 double myPID_Setpoint, myPID_Input, myPID_Output;
-double Kp=0.1, Ki=0, Kd=0; //Gains
+double Kp=0.43, Ki=0.0001, Kd=0.05; //Gains
 PID myPID(&myPID_Input, &myPID_Output, &myPID_Setpoint, Kp, Ki, Kd, P_ON_E, DIRECT);
 
 //var for checking if comms are lost
 unsigned long lastTimeRX = 0;
+
+// Used for comms protocol
+bool waitingForStartByte = true;
 
 //Local testing
 int loopCount = 0;
@@ -123,20 +126,27 @@ void loop() {
   // Poll the encoder
   //inttEnc.read();
 
-  if (serialAvailable(4)) {
+  if (waitingForStartByte) {
     // Look for the start byte (255, or 0xFF)
     if (serialRead() == 255) {
       lastTimeRX = millis();
-      int left = serialRead();
-      int right = serialRead();
-      int arm = serialRead();
-      if (left == 126 && right == 126 && arm == 126) {
-        processSetup();
-      } else if (left < 255 && right < 255 && arm < 255) {
-        processCmd(left, right, arm);
-      }
+      waitingForStartByte = false;
     }
   }
+
+  if (!waitingForStartByte && serialAvailable(3)) {
+    waitingForStartByte = true;
+    // Read the message body (3 bytes)
+    int left = serialRead();
+    int right = serialRead();
+    int arm = serialRead();
+    if (left == 126 && right == 126 && arm == 126) {
+      processSetup();
+    } else if (left < 255 && right < 255 && arm < 255) {
+      processCmd(left, right, arm);
+    }
+  }
+ 
   if (millis() - lastTimeRX > 250) {
     idle();
   }
@@ -203,11 +213,11 @@ void setArmAngle(int arm) {
 //  Serial.print(", input: ");
 //  Serial.print(myPID_Input);
 //  Serial.print(", output:");
-//  Serial.print((int) myPID_Output + 1500);
+//  Serial.print((int) 1500 - myPID_Output);
 //  Serial.println("");
 
   // Cap the PID command at the endpoints of the command range
-  double armMicroseconds = myPID_Output + 1500;
+  double armMicroseconds = 1500 - myPID_Output;
   if (armMicroseconds > 2000) armMicroseconds = 2000;
   if (armMicroseconds < 1000) armMicroseconds = 1000;
 
@@ -507,3 +517,4 @@ int serialRead() {
 //  }
 //  return value;
 }
+
