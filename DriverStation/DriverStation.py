@@ -114,6 +114,7 @@ def main():
             # Get the drive motor commands for Arcade Drive
             driveMtrCmds = arcadeDrive(yRaw, rRaw)
             driveMtrCmds['left'] = 255 - driveMtrCmds['left']
+            driveMtrCmds['right'] = 255 - driveMtrCmds['right']
 
             # Protect against sending a reserved value
             if driveMtrCmds['left'] == RESERVED_VALUE_SET_PID_GAINS:
@@ -240,7 +241,7 @@ def arcadeDrive(yIn, rIn):
     yEndpoint = 127  # maximum/minumum (+/-) for the Y-axis translation
 
     rExpConst = 1.5  # exponential growth coefficient of the rotation -- should be between 1.0-4.0
-    rEndpoint = 50   # maximum/minimum (+/-) for the rotation
+    rEndpoint = 70   # maximum/minimum (+/-) for the rotation
 
     # Set a deadband for the raw joystick input
     deadband = 0.10
